@@ -168,7 +168,7 @@
     margin: 4px 0;
   }
 
-  /* ── Submit ── */
+  /* ── Buttons ── */
   .submit-area {
     display: flex;
     flex-direction: column;
@@ -177,11 +177,9 @@
     padding-top: 8px;
   }
 
-  button[type="submit"] {
-    background: var(--accent);
+  .btn {
     border: none;
     border-radius: var(--radius);
-    color: #0a1a0a;
     cursor: pointer;
     font-family: 'Noto Sans JP', sans-serif;
     font-size: 14px;
@@ -190,12 +188,30 @@
     padding: 14px 40px;
     transition: background 0.15s, transform 0.1s;
   }
-  button[type="submit"]:hover { background: #7fc87f; }
-  button[type="submit"]:active { transform: scale(0.98); }
-  button[type="submit"]:disabled {
-    background: var(--accent-dim);
-    cursor: not-allowed;
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled {
     opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #0a1a0a;
+  }
+  .btn-primary:hover { background: #7fc87f; }
+  .btn-primary:disabled { background: var(--accent-dim); }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--border); }
+
+  .btn-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 
   /* ── Status message ── */
@@ -217,6 +233,57 @@
     background: #2e1a1a;
     border: 1px solid var(--error);
     color: var(--error);
+  }
+
+  /* ── Confirm page ── */
+  #confirmPage {
+    display: none;
+    max-width: 680px;
+    margin: 0 auto;
+  }
+  .confirm-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 28px;
+  }
+  .confirm-table th,
+  .confirm-table td {
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    text-align: left;
+    vertical-align: top;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .confirm-table th {
+    width: 30%;
+    background: var(--surface);
+    color: var(--text-label);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .confirm-table td {
+    background: var(--surface2);
+    white-space: pre-wrap;
+  }
+
+  /* ── Done page ── */
+  #donePage {
+    display: none;
+    max-width: 680px;
+    margin: 0 auto;
+    text-align: center;
+    padding-top: 60px;
+  }
+  #donePage .done-msg {
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 12px;
+  }
+  #donePage .done-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 40px;
   }
 
   /* ── Config notice ── */
@@ -366,10 +433,36 @@
   <!-- Submit -->
   <div class="submit-area">
     <div id="status"></div>
-    <button type="submit" id="submitBtn">送信する</button>
+    <button type="submit" class="btn btn-primary" id="confirmBtn">確認する</button>
   </div>
 
 </form>
+
+<!-- 確認画面 -->
+<div id="confirmPage">
+  <h2 style="font-size:20px; font-weight:500; margin-bottom:24px; border-left:3px solid var(--accent); padding-left:16px;">入力内容の確認</h2>
+  <table class="confirm-table">
+    <tr><th>日付</th><td id="c_date"></td></tr>
+    <tr><th>氏名</th><td id="c_member"></td></tr>
+    <tr><th>業務時間</th><td id="c_time"></td></tr>
+    <tr><th>イベント名／実施業務</th><td id="c_title"></td></tr>
+    <tr><th>実施事項</th><td id="c_tasks"></td></tr>
+    <tr><th>業務内容</th><td id="c_content"></td></tr>
+    <tr><th>特記事項等</th><td id="c_notes"></td></tr>
+    <tr><th>気づき・振り返り</th><td id="c_reflection"></td></tr>
+  </table>
+  <div class="btn-row">
+    <button class="btn btn-secondary" id="backBtn">戻って修正する</button>
+    <button class="btn btn-primary" id="sendBtn">送信する</button>
+  </div>
+</div>
+
+<!-- 完了画面 -->
+<div id="donePage">
+  <div class="done-msg">送信できました。お疲れさまでした。</div>
+  <div class="done-sub">日報が記録されました</div>
+  <button class="btn btn-primary" id="newBtn">新しい日報を書く</button>
+</div>
 
 <script>
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -420,35 +513,59 @@
     document.getElementById(id).addEventListener('change', updateDuration);
   });
 
-  // フォーム送信
-  document.getElementById('reportForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('submitBtn');
-    const status = document.getElementById('status');
+  // ── 画面切り替え ──
+  const formEl = document.getElementById('reportForm');
+  const headerEl = document.querySelector('header');
+  const confirmPage = document.getElementById('confirmPage');
+  const donePage = document.getElementById('donePage');
 
-    btn.disabled = true;
-    btn.textContent = '送信中…';
+  function showForm() {
+    headerEl.style.display = '';
+    formEl.style.display = '';
+    confirmPage.style.display = 'none';
+    donePage.style.display = 'none';
+    window.scrollTo(0, 0);
+  }
+  function showConfirm() {
+    headerEl.style.display = 'none';
+    formEl.style.display = 'none';
+    confirmPage.style.display = '';
+    donePage.style.display = 'none';
+    window.scrollTo(0, 0);
+  }
+  function showDone() {
+    headerEl.style.display = 'none';
+    formEl.style.display = 'none';
+    confirmPage.style.display = 'none';
+    donePage.style.display = '';
+    window.scrollTo(0, 0);
+  }
+
+  // ── 確認画面へ ──
+  let pendingPayload = null;
+
+  formEl.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const status = document.getElementById('status');
     status.className = '';
     status.style.display = 'none';
 
     const sh = document.getElementById('start_h').value;
     const sm = document.getElementById('start_m').value;
     const eh = document.getElementById('end_h').value;
-    const em = document.getElementById('end_m').value;
+    const em_val = document.getElementById('end_m').value;
 
-    if (!sh || !sm || !eh || !em) {
+    if (!sh || !sm || !eh || !em_val) {
       status.textContent = '業務時間を入力してください。';
       status.className = 'error';
-      btn.disabled = false;
-      btn.textContent = '送信する';
       return;
     }
 
-    const payload = {
+    pendingPayload = {
       date:       document.getElementById('date').value,
       member:     document.getElementById('member').value,
       start_time: `${sh}:${sm}`,
-      end_time:   `${eh}:${em}`,
+      end_time:   `${eh}:${em_val}`,
       title:      document.getElementById('title').value,
       tasks:      document.getElementById('tasks').value,
       content:    document.getElementById('content').value,
@@ -456,27 +573,53 @@
       reflection: document.getElementById('reflection').value,
     };
 
+    // 確認画面に値をセット
+    document.getElementById('c_date').textContent = pendingPayload.date;
+    document.getElementById('c_member').textContent = pendingPayload.member;
+    document.getElementById('c_time').textContent = pendingPayload.start_time + ' 〜 ' + pendingPayload.end_time;
+    document.getElementById('c_title').textContent = pendingPayload.title;
+    document.getElementById('c_tasks').textContent = pendingPayload.tasks || '（未入力）';
+    document.getElementById('c_content').textContent = pendingPayload.content || '（未入力）';
+    document.getElementById('c_notes').textContent = pendingPayload.notes || '（未入力）';
+    document.getElementById('c_reflection').textContent = pendingPayload.reflection || '（未入力）';
+
+    showConfirm();
+  });
+
+  // ── 戻るボタン ──
+  document.getElementById('backBtn').addEventListener('click', () => {
+    showForm();
+  });
+
+  // ── 送信ボタン ──
+  document.getElementById('sendBtn').addEventListener('click', async () => {
+    const sendBtn = document.getElementById('sendBtn');
+    sendBtn.disabled = true;
+    sendBtn.textContent = '送信中…';
+
     try {
-      // GAS は no-cors で POST（レスポンスは opaque になる）
       await fetch(GAS_URL, {
         method: 'POST',
         mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(pendingPayload),
       });
 
-      status.textContent = '✓ 送信しました。お疲れさまでした！';
-      status.className = 'success';
-      document.getElementById('reportForm').reset();
+      formEl.reset();
       document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
       document.getElementById('duration_display').textContent = '';
+      showDone();
     } catch (err) {
-      status.textContent = `送信に失敗しました。GAS_URL を確認してください。\n${err.message}`;
-      status.className = 'error';
+      alert('送信に失敗しました。\n' + err.message);
     }
 
-    btn.disabled = false;
-    btn.textContent = '送信する';
+    sendBtn.disabled = false;
+    sendBtn.textContent = '送信する';
+  });
+
+  // ── 新しい日報ボタン ──
+  document.getElementById('newBtn').addEventListener('click', () => {
+    showForm();
   });
 </script>
 </body>
