@@ -10,7 +10,7 @@
 
 // ── 設定 ──────────────────────────
 const CONFIG = {
-  SHEET_NAME: '日報',
+  SHEET_NAME: '日報_2026',
   DRIVE_FOLDER_ID: 'YOUR_FOLDER_ID',   // ← Google DriveフォルダIDに変更
   COMPANY_NAME: 'arsaffix Inc.',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
@@ -77,7 +77,7 @@ function doPost(e) {
 function generateDailyReport(dateStr) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
-  if (!sheet) throw new Error('「日報」シートが見つかりません');
+  if (!sheet) throw new Error('「日報_2026」シートが見つかりません');
 
   const data = sheet.getDataRange().getValues();
   const rows = data.slice(1).filter(row => row[1] === dateStr);
