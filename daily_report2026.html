@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日報フォーム</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f0f0f;
+    --surface: #191919;
+    --surface2: #222222;
+    --border: #2e2e2e;
+    --border-focus: #5a7a5a;
+    --accent: #6aaa6a;
+    --accent-dim: #3d6b3d;
+    --text: #e8e8e4;
+    --text-muted: #888880;
+    --text-label: #b0b0a8;
+    --error: #e06060;
+    --success: #6aaa6a;
+    --radius: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans JP', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    padding: 40px 20px 80px;
+  }
+
+  /* ── Header ── */
+  header {
+    max-width: 680px;
+    margin: 0 auto 48px;
+    border-left: 3px solid var(--accent);
+    padding-left: 20px;
+  }
+  header .label {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  header h1 {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  /* ── Form ── */
+  form {
+    max-width: 680px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-label);
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  label .req {
+    color: var(--accent);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .hint {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    font-family: 'DM Mono', monospace;
+  }
+
+  input[type="text"],
+  input[type="date"],
+  input[type="time"],
+  select,
+  textarea {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'Noto Sans JP', sans-serif;
+    font-size: 14px;
+    font-weight: 300;
+    padding: 12px 14px;
+    transition: border-color 0.15s, background 0.15s;
+    width: 100%;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="text"]:focus,
+  input[type="date"]:focus,
+  input[type="time"]:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--border-focus);
+    background: var(--surface2);
+  }
+
+  /* time row */
+  .time-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  /* time select group */
+  .time-select-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .time-select-group select {
+    flex: 1;
+  }
+  .time-colon {
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 18px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888880' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+    cursor: pointer;
+  }
+  select option {
+    background: #222;
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 120px;
+    line-height: 1.7;
+  }
+
+  /* section divider */
+  .section-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 4px 0;
+  }
+
+  /* ── Submit ── */
+  .submit-area {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    padding-top: 8px;
+  }
+
+  button[type="submit"] {
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    color: #0a1a0a;
+    cursor: pointer;
+    font-family: 'Noto Sans JP', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 14px 40px;
+    transition: background 0.15s, transform 0.1s;
+  }
+  button[type="submit"]:hover { background: #7fc87f; }
+  button[type="submit"]:active { transform: scale(0.98); }
+  button[type="submit"]:disabled {
+    background: var(--accent-dim);
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  /* ── Status message ── */
+  #status {
+    font-size: 13px;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    display: none;
+    width: 100%;
+  }
+  #status.success {
+    display: block;
+    background: #1a2e1a;
+    border: 1px solid var(--success);
+    color: var(--success);
+  }
+  #status.error {
+    display: block;
+    background: #2e1a1a;
+    border: 1px solid var(--error);
+    color: var(--error);
+  }
+
+  /* ── Config notice ── */
+  .config-notice {
+    background: #1e1a0a;
+    border: 1px solid #5a4a10;
+    border-radius: var(--radius);
+    color: #c8a840;
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    padding: 12px 16px;
+    line-height: 1.6;
+  }
+  .config-notice strong { font-weight: 500; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* date input color fix for webkit */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.6);
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="label">Daily Report</div>
+  <h1>業務日報</h1>
+</header>
+
+<form id="reportForm">
+
+  <!-- Config notice -->
+  <div class="config-notice">
+    <strong>⚙ 設定が必要：</strong> このフォームを使うには、GAS をデプロイして下の <code>GAS_URL</code> を書き換えてください。<br>
+    メンバーリストは &lt;select id="member"&gt; 内の &lt;option&gt; を編集してください。
+  </div>
+
+  <!-- 日付 -->
+  <div class="field">
+    <label for="date">日付 <span class="req">*</span></label>
+    <input type="date" id="date" name="date" required>
+  </div>
+
+  <!-- メンバー -->
+  <div class="field">
+    <label for="member">氏名 <span class="req">*</span></label>
+    <select id="member" name="member" required>
+      <option value="" disabled selected>-- 選択してください --</option>
+      <!-- ↓ メンバーを編集してください -->
+      <option>山田 太郎</option>
+      <option>鈴木 花子</option>
+      <option>田中 一郎</option>
+      <option>佐藤 美咲</option>
+    </select>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- 業務時間 -->
+  <div class="field">
+    <label>業務時間 <span class="req">*</span></label>
+    <div class="hint">分は 00 / 15 / 30 / 45 から選択してください</div>
+    <div class="time-row">
+      <div class="field">
+        <label style="font-size:12px; color: var(--text-muted);">開始</label>
+        <div class="time-select-group">
+          <select id="start_h" name="start_h" required>
+            <option value="" disabled selected>時</option>
+          </select>
+          <span class="time-colon">:</span>
+          <select id="start_m" name="start_m" required>
+            <option value="" disabled selected>分</option>
+            <option value="00">00</option>
+            <option value="15">15</option>
+            <option value="30">30</option>
+            <option value="45">45</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label style="font-size:12px; color: var(--text-muted);">終了</label>
+        <div class="time-select-group">
+          <select id="end_h" name="end_h" required>
+            <option value="" disabled selected>時</option>
+          </select>
+          <span class="time-colon">:</span>
+          <select id="end_m" name="end_m" required>
+            <option value="" disabled selected>分</option>
+            <option value="00">00</option>
+            <option value="15">15</option>
+            <option value="30">30</option>
+            <option value="45">45</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="duration_display" style="font-size:12px; color: var(--accent); font-family: 'DM Mono', monospace; margin-top:4px;"></div>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- 業務タイトル -->
+  <div class="field">
+    <label for="title">業務タイトル <span class="req">*</span></label>
+    <div class="hint">
+      事業名は略称ではなく正式名称を入力してください。<br>
+      例）アートインキュベーションプログラム（市原えつこ）テクニカルディレクション
+    </div>
+    <textarea id="title" name="title" rows="3" placeholder="例：&#10;・アートインキュベーションプログラム（市原えつこ）テクニカルディレクション&#10;・未来提案型キャンプの設営・技術サポート" required></textarea>
+  </div>
+
+  <!-- 業務内容 -->
+  <div class="field">
+    <label for="content">業務内容</label>
+    <div class="hint">実際に行った業務の簡潔な記録（複数可）</div>
+    <textarea id="content" name="content" rows="5" placeholder="例：&#10;・プロジェクター／音響機器の設営と動作確認&#10;・登壇者へのマイク操作案内・スライド投影補助&#10;・来場者向け記録写真の撮影"></textarea>
+  </div>
+
+  <!-- 気づき・ふりかえり -->
+  <div class="field">
+    <label for="reflection">気づき・記録・ふりかえり</label>
+    <div class="hint">仕事中の発見、提案、課題、つぶやきなど自由に</div>
+    <textarea id="reflection" name="reflection" rows="4" placeholder="気づいたこと、改善案、次回への引き継ぎ等…"></textarea>
+  </div>
+
+  <!-- Submit -->
+  <div class="submit-area">
+    <div id="status"></div>
+    <button type="submit" id="submitBtn">送信する</button>
+  </div>
+
+</form>
+
+<script>
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 🔧 ここを GAS のデプロイ URL に変更してください
+  const GAS_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec";
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // 日付のデフォルトを今日に
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
+
+  // 時セレクトを 0〜23 で生成
+  function buildHourOptions(selectId) {
+    const sel = document.getElementById(selectId);
+    for (let h = 0; h < 24; h++) {
+      const opt = document.createElement('option');
+      opt.value = String(h).padStart(2, '0');
+      opt.textContent = String(h).padStart(2, '0');
+      sel.appendChild(opt);
+    }
+  }
+  buildHourOptions('start_h');
+  buildHourOptions('end_h');
+
+  // 勤務時間の自動計算
+  function getTimeValue(hId, mId) {
+    const h = document.getElementById(hId).value;
+    const m = document.getElementById(mId).value;
+    if (!h || !m) return null;
+    return parseInt(h) * 60 + parseInt(m);
+  }
+
+  function updateDuration() {
+    const el = document.getElementById('duration_display');
+    const s = getTimeValue('start_h', 'start_m');
+    const e = getTimeValue('end_h', 'end_m');
+    if (s === null || e === null) { el.textContent = ''; return; }
+    let mins = e - s;
+    if (mins < 0) mins += 24 * 60;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    el.textContent = `→ 勤務時間：${h}時間${m > 0 ? m + '分' : ''}`;
+  }
+  ['start_h','start_m','end_h','end_m'].forEach(id => {
+    document.getElementById(id).addEventListener('change', updateDuration);
+  });
+
+  // フォーム送信
+  document.getElementById('reportForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    const status = document.getElementById('status');
+
+    btn.disabled = true;
+    btn.textContent = '送信中…';
+    status.className = '';
+    status.style.display = 'none';
+
+    const sh = document.getElementById('start_h').value;
+    const sm = document.getElementById('start_m').value;
+    const eh = document.getElementById('end_h').value;
+    const em = document.getElementById('end_m').value;
+
+    if (!sh || !sm || !eh || !em) {
+      status.textContent = '業務時間を入力してください。';
+      status.className = 'error';
+      btn.disabled = false;
+      btn.textContent = '送信する';
+      return;
+    }
+
+    const payload = {
+      date:       document.getElementById('date').value,
+      member:     document.getElementById('member').value,
+      start_time: `${sh}:${sm}`,
+      end_time:   `${eh}:${em}`,
+      title:      document.getElementById('title').value,
+      content:    document.getElementById('content').value,
+      reflection: document.getElementById('reflection').value,
+    };
+
+    try {
+      // GAS は no-cors で POST（レスポンスは opaque になる）
+      await fetch(GAS_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      status.textContent = '✓ 送信しました。お疲れさまでした！';
+      status.className = 'success';
+      document.getElementById('reportForm').reset();
+      document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
+      document.getElementById('duration_display').textContent = '';
+    } catch (err) {
+      status.textContent = `送信に失敗しました。GAS_URL を確認してください。\n${err.message}`;
+      status.className = 'error';
+    }
+
+    btn.disabled = false;
+    btn.textContent = '送信する';
+  });
+</script>
+</body>
+</html>
