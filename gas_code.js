@@ -184,18 +184,26 @@ function generateDailyReport(dateStr) {
     if (t) titleSet[t] = true;
   });
   var titles = Object.keys(titleSet).join('\n');
+  // 実施事項・業務内容: 【名前】内容... を同一行に（コンパクト表示）
   var combineField = function(idx) {
     return rows.map(function(r) {
       if (!r[idx]) return null;
-      var parts = [];
-      if (rows.length > 1) parts.push('【' + (r[2] || '') + '】');
-      parts.push(r[idx]);
-      return parts.join('\n');
-    }).filter(Boolean).join('\n\n');
+      if (rows.length > 1) {
+        return '【' + (r[2] || '') + '】' + r[idx];
+      }
+      return String(r[idx]);
+    }).filter(Boolean).join('\n');
   };
   var tasks = combineField(6);
   var contents = combineField(7);
-  var notes = combineField(8);
+  // 特記事項等: 名前と内容を同一行に（【名前】内容...）
+  var notes = rows.map(function(r) {
+    if (!r[8]) return null;
+    if (rows.length > 1) {
+      return '【' + (r[2] || '') + '】' + r[8];
+    }
+    return String(r[8]);
+  }).filter(Boolean).join('\n');
 
   var page = buildPage({
     date: dateDisplay,
@@ -212,21 +220,38 @@ function generateDailyReport(dateStr) {
     + '<style>' + getReportCss() + '</style>'
     + '</head><body>' + page + '</body></html>';
 
-  // PDF生成
-  var blob = HtmlService.createHtmlOutput(html)
-    .getBlob()
-    .setName('業務日報_' + dateStr + '.pdf');
-
-  // Driveに保存（同名ファイルは上書き）
+  // PDF生成: HTMLをGoogle Docsに変換 → PDFエクスポート（正規PDF）
+  // ※ Drive API v2サービスを有効にする必要あり（Apps Script > サービス > Drive API）
   var folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
-  var existing = folder.getFilesByName('業務日報_' + dateStr + '.pdf');
+  var fileName = '業務日報_' + dateStr;
+
+  // 既存の同名PDFを削除
+  var existing = folder.getFilesByName(fileName + '.pdf');
   while (existing.hasNext()) {
     existing.next().setTrashed(true);
   }
 
-  var file = folder.createFile(blob);
-  Logger.log('PDF保存完了: ' + file.getUrl());
-  return file.getUrl();
+  // HTMLをGoogle Docsとして変換アップロード
+  var htmlBlob = Utilities.newBlob(html, 'text/html', fileName + '.html');
+  var docFile = Drive.Files.insert(
+    { title: fileName, parents: [{ id: CONFIG.DRIVE_FOLDER_ID }] },
+    htmlBlob,
+    { convert: true }
+  );
+
+  // Google DocsからPDFとしてエクスポート
+  var pdfBlob = UrlFetchApp.fetch(
+    'https://docs.google.com/document/d/' + docFile.id + '/export?format=pdf',
+    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }
+  ).getBlob().setName(fileName + '.pdf');
+
+  var pdfFile = folder.createFile(pdfBlob);
+
+  // 中間のGoogle Docsを削除
+  DriveApp.getFileById(docFile.id).setTrashed(true);
+
+  Logger.log('PDF保存完了: ' + pdfFile.getUrl());
+  return pdfFile.getUrl();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -270,46 +295,37 @@ function buildPage(d) {
     return (str || '').replace(/\n/g, '<br>');
   };
 
+  var th = 'style="border:1px solid #000;padding:4px 8px;vertical-align:top;font-size:9pt;font-weight:bold;background:#f8f8f8;text-align:left;white-space:nowrap;width:15%;"';
+  var td = 'style="border:1px solid #000;padding:4px 8px;vertical-align:top;font-size:9pt;line-height:1.4;width:85%;"';
+
   return ''
-    + '<div class="page">'
-    + '  <h1>テクニカルサポート業務日報</h1>'
+    + '<div>'
+    + '  <p style="text-align:center;font-size:18pt;font-weight:bold;margin-bottom:10px;">テクニカルサポート業務日報</p>'
     + ''
-    + '  <div class="header-row">'
-    + '    <div class="date">' + d.date + '</div>'
-    + '    <table class="stamp-table">'
-    + '      <tr><td colspan="4" class="stamp-label">※押印欄</td></tr>'
-    + '      <tr><td class="stamp-cell"></td><td class="stamp-cell"></td><td class="stamp-cell"></td><td class="stamp-cell"></td></tr>'
-    + '    </table>'
-    + '  </div>'
+    + '  <table style="width:100%;border-collapse:collapse;margin-bottom:10px;"><tr>'
+    + '    <td style="border:none;padding:0;vertical-align:bottom;text-align:left;font-size:10pt;">' + d.date + '</td>'
+    + '    <td style="border:none;padding:0;vertical-align:bottom;text-align:right;">'
+    + '      <table style="border-collapse:collapse;margin-left:auto;"><tr>'
+    + '        <td colspan="4" style="border:none;font-size:8pt;padding:2px 4px;">※押印欄</td>'
+    + '      </tr><tr>'
+    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
+    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
+    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
+    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
+    + '      </tr></table>'
+    + '    </td>'
+    + '  </tr></table>'
     + ''
-    + '  <table class="report-table">'
-    + '    <tr>'
-    + '      <th>イベント名／<br>実施業務</th>'
-    + '      <td>' + nl2br(d.title) + '</td>'
-    + '    </tr>'
-    + '    <tr>'
-    + '      <th>実施事項</th>'
-    + '      <td>' + nl2br(d.tasks) + '</td>'
-    + '    </tr>'
-    + '    <tr>'
-    + '      <th>業務内容</th>'
-    + '      <td class="content-cell">' + nl2br(d.content) + '</td>'
-    + '    </tr>'
-    + '    <tr>'
-    + '      <th>勤務シフト</th>'
-    + '      <td>' + nl2br(d.shift) + '</td>'
-    + '    </tr>'
-    + '    <tr>'
-    + '      <th>特記事項等</th>'
-    + '      <td>' + nl2br(d.notes) + '</td>'
-    + '    </tr>'
-    + '    <tr>'
-    + '      <th>責任者氏名</th>'
-    + '      <td>' + d.responsible + '</td>'
-    + '    </tr>'
+    + '  <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">'
+    + '    <tr><td ' + th + '>イベント名／<br>実施業務</td><td ' + td + '>' + nl2br(d.title) + '</td></tr>'
+    + '    <tr><td ' + th + '>実施事項</td><td ' + td + '>' + nl2br(d.tasks) + '</td></tr>'
+    + '    <tr><td ' + th + '>業務内容</td><td ' + td + '>' + nl2br(d.content) + '</td></tr>'
+    + '    <tr><td ' + th + '>勤務シフト</td><td ' + td + '>' + nl2br(d.shift) + '</td></tr>'
+    + '    <tr><td ' + th + '>特記事項等</td><td ' + td + '>' + nl2br(d.notes) + '</td></tr>'
+    + '    <tr><td ' + th + '>責任者氏名</td><td ' + td + '>' + d.responsible + '</td></tr>'
     + '  </table>'
     + ''
-    + '  <div class="company">' + d.company + '</div>'
+    + '  <p style="text-align:center;font-size:10pt;">' + d.company + '</p>'
     + '</div>';
 }
 
@@ -320,14 +336,16 @@ function getReportCss() {
     + 'body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic Pro", "Yu Gothic", sans-serif; font-size: 10.5pt; color: #000; margin: 0; padding: 0; line-height: 1.25; }'
     + '.page { position: relative; }'
     + ''
-    + 'h1 { text-align: center; font-size: 15pt; font-weight: bold; margin-bottom: 14px; }'
+    + 'h1 { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 14px; }'
     + ''
-    + '.header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }'
-    + '.date { font-size: 10.5pt; padding-top: 4px; }'
+    + '.header-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }'
+    + '.header-table td { border: none; padding: 0; vertical-align: bottom; }'
+    + '.header-date { text-align: left; font-size: 10.5pt; }'
+    + '.header-stamp { text-align: right; }'
     + ''
-    + '.stamp-table { border-collapse: collapse; margin-left: auto; }'
+    + '.stamp-table { border-collapse: collapse; display: inline-table; }'
     + '.stamp-label { font-size: 9pt; text-align: left; padding: 2px 4px; border: none; }'
-    + '.stamp-cell { width: 18mm; height: 18mm; border: 1px solid #000; }'
+    + '.stamp-cell { width: 60px; height: 60px; border: 1px solid #000; }'
     + ''
     + '.report-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }'
     + '.report-table th, .report-table td { border: 1px solid #000; padding: 6px 10px; vertical-align: top; font-size: 10pt; line-height: 1.25; }'
