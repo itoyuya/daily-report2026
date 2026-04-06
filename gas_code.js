@@ -30,8 +30,8 @@ function doPost(e) {
       sheet.appendRow([
         'タイムスタンプ', '日付', '氏名',
         '開始時間', '終了時間',
-        '業務タイトル', '業務内容', '気づき・ふりかえり',
-        '勤務時間'
+        'イベント名／実施業務', '実施事項', '業務内容', '特記事項等',
+        '気づき・振り返り', '勤務時間'
       ]);
     }
 
@@ -52,7 +52,9 @@ function doPost(e) {
       data.start_time,
       data.end_time,
       data.title,
+      data.tasks,
       data.content,
+      data.notes,
       data.reflection,
       hours,
     ]);
@@ -91,29 +93,30 @@ function generateDailyReport(dateStr) {
   const dateDisplay = '令和' + reiwa + '年' + (date.getMonth() + 1) + '月' + date.getDate() + '日（' + weekdays[date.getDay()] + '）';
 
   // 全メンバー分を1ページにcombine
-  // row: [タイムスタンプ, 日付, 氏名, 開始, 終了, タイトル, 内容, ふりかえり, 勤務時間]
-  var shifts = rows.map(function(r) { return (r[2] || '') + '：' + (r[3] || '') + '〜' + (r[4] || '') + '（' + r[8] + 'h）'; }).join('\n');
+  // row: [タイムスタンプ, 日付, 氏名, 開始, 終了, タイトル, 実施事項, 内容, 特記事項等, 気づき・振り返り, 勤務時間]
+  //        0            1     2     3     4     5        6        7      8            9             10
+  var shifts = rows.map(function(r) { return (r[2] || '') + '：' + (r[3] || '') + '〜' + (r[4] || '') + '（' + r[10] + 'h）'; }).join('\n');
   var titles = rows.map(function(r) { return r[5] || ''; }).filter(Boolean).join('\n');
-  var contents = rows.map(function(r) {
-    var parts = [];
-    if (rows.length > 1) parts.push('【' + (r[2] || '') + '】');
-    if (r[6]) parts.push(r[6]);
-    return parts.join('\n');
-  }).join('\n\n');
-  var reflections = rows.map(function(r) {
-    if (!r[7]) return null;
-    var parts = [];
-    if (rows.length > 1) parts.push('【' + (r[2] || '') + '】');
-    parts.push(r[7]);
-    return parts.join('\n');
-  }).filter(Boolean).join('\n\n');
+  var combineField = function(idx) {
+    return rows.map(function(r) {
+      if (!r[idx]) return null;
+      var parts = [];
+      if (rows.length > 1) parts.push('【' + (r[2] || '') + '】');
+      parts.push(r[idx]);
+      return parts.join('\n');
+    }).filter(Boolean).join('\n\n');
+  };
+  var tasks = combineField(6);
+  var contents = combineField(7);
+  var notes = combineField(8);
 
   var page = buildPage({
     date: dateDisplay,
     shift: shifts,
     title: titles,
+    tasks: tasks,
     content: contents,
-    reflection: reflections,
+    notes: notes,
     responsible: CONFIG.RESPONSIBLE_PERSON,
     company: CONFIG.COMPANY_NAME,
   });
@@ -164,6 +167,10 @@ function buildPage(d) {
     + '      <td>' + nl2br(d.title) + '</td>'
     + '    </tr>'
     + '    <tr>'
+    + '      <th>実施事項</th>'
+    + '      <td>' + nl2br(d.tasks) + '</td>'
+    + '    </tr>'
+    + '    <tr>'
     + '      <th>業務内容</th>'
     + '      <td class="content-cell">' + nl2br(d.content) + '</td>'
     + '    </tr>'
@@ -173,7 +180,7 @@ function buildPage(d) {
     + '    </tr>'
     + '    <tr>'
     + '      <th>特記事項等</th>'
-    + '      <td>' + nl2br(d.reflection) + '</td>'
+    + '      <td>' + nl2br(d.notes) + '</td>'
     + '    </tr>'
     + '    <tr>'
     + '      <th>責任者氏名</th>'

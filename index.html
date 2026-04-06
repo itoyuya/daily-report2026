@@ -321,28 +321,46 @@
 
   <hr class="section-divider">
 
-  <!-- 業務タイトル -->
+  <!-- イベント名／実施業務 -->
   <div class="field">
-    <label for="title">業務タイトル <span class="req">*</span></label>
+    <label for="title">イベント名／実施業務 <span class="req">*</span></label>
     <div class="hint">
-      事業名は略称ではなく正式名称を入力してください。<br>
-      例）アートインキュベーションプログラム（市原えつこ）テクニカルディレクション
+      事業やイベント名は略称ではなく正式名称を入力してください。<br>
+      例）アートインキュベーションプログラム（市原えつこ）<br>
+      例）キャンプ／ショーケース／ワークショップ／ミートアップ<br>
+      例）ラボ運営および施設管理
     </div>
-    <textarea id="title" name="title" rows="3" placeholder="例：&#10;・アートインキュベーションプログラム（市原えつこ）テクニカルディレクション&#10;・未来提案型キャンプの設営・技術サポート" required></textarea>
+    <textarea id="title" name="title" rows="3" placeholder="例：&#10;・アートインキュベーションプログラム（市原えつこ）&#10;・ラボ運営および施設管理" required></textarea>
+  </div>
+
+  <!-- 実施事項 -->
+  <div class="field">
+    <label for="tasks">実施事項</label>
+    <div class="hint">やったことの箇条書きを簡潔に</div>
+    <textarea id="tasks" name="tasks" rows="3" placeholder="例：&#10;・プロジェクター設営&#10;・音響チェック"></textarea>
   </div>
 
   <!-- 業務内容 -->
   <div class="field">
     <label for="content">業務内容</label>
-    <div class="hint">実際に行った業務の簡潔な記録（複数可）</div>
-    <textarea id="content" name="content" rows="5" placeholder="例：&#10;・プロジェクター／音響機器の設営と動作確認&#10;・登壇者へのマイク操作案内・スライド投影補助&#10;・来場者向け記録写真の撮影"></textarea>
+    <div class="hint">実施事項の詳細や経緯、補足などを記入してください</div>
+    <textarea id="content" name="content" rows="5" placeholder="例：&#10;・スクリーン左端にケラレあり、次回は投影位置を10cm右にずらす&#10;・HDMIケーブル1本が接触不良、予備に交換済み"></textarea>
   </div>
 
-  <!-- 気づき・ふりかえり -->
+  <!-- 特記事項等 -->
   <div class="field">
-    <label for="reflection">気づき・記録・ふりかえり</label>
-    <div class="hint">仕事中の発見、提案、課題、つぶやきなど自由に</div>
-    <textarea id="reflection" name="reflection" rows="4" placeholder="気づいたこと、改善案、次回への引き継ぎ等…"></textarea>
+    <label for="notes">特記事項等</label>
+    <div class="hint">課題、改善案、引き継ぎ事項、トラブル報告などあれば</div>
+    <textarea id="notes" name="notes" rows="3" placeholder="課題や引き継ぎ事項があれば記入…"></textarea>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- 気づき・振り返り -->
+  <div class="field">
+    <label for="reflection">気づき・振り返り</label>
+    <div class="hint">こちらは先方には報告されません。arsaffix内のみ読むことができます。<br>ここでしか書けない愚痴などがあれば、お好きなだけお書きください。</div>
+    <textarea id="reflection" name="reflection" rows="4" placeholder="自由に書いてください…"></textarea>
   </div>
 
   <!-- Submit -->
@@ -432,7 +450,9 @@
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em}`,
       title:      document.getElementById('title').value,
+      tasks:      document.getElementById('tasks').value,
       content:    document.getElementById('content').value,
+      notes:      document.getElementById('notes').value,
       reflection: document.getElementById('reflection').value,
     };
 
