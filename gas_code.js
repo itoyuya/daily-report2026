@@ -11,7 +11,7 @@
 // ── 設定 ──────────────────────────
 const CONFIG = {
   SHEET_NAME: '日報_2026',
-  DRIVE_FOLDER_ID: 'YOUR_FOLDER_ID',   // ← Google DriveフォルダIDに変更
+  DRIVE_FOLDER_ID: '1nqFYO3mjOcwupn--p1Q7Bh8y-SAtTOl5',   // ← Google DriveフォルダIDに変更
   COMPANY_NAME: 'arsaffix Inc.',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
 };
@@ -38,9 +38,9 @@ function doPost(e) {
     // 勤務時間（時間単位）を算出
     var hours = '';
     if (data.start_time && data.end_time) {
-      var s = data.start_time.split(':');
-      var e = data.end_time.split(':');
-      var mins = (parseInt(e[0]) * 60 + parseInt(e[1])) - (parseInt(s[0]) * 60 + parseInt(s[1]));
+      var st = data.start_time.split(':');
+      var en = data.end_time.split(':');
+      var mins = (parseInt(en[0]) * 60 + parseInt(en[1])) - (parseInt(st[0]) * 60 + parseInt(st[1]));
       if (mins < 0) mins += 24 * 60;
       hours = mins / 60;
     }
