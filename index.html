@@ -343,6 +343,21 @@
     </select>
   </div>
 
+  <!-- ポスト区分 -->
+  <div class="field">
+    <label>ポスト区分 <span class="req">*</span></label>
+    <div style="display:flex; gap:24px; margin-top:4px;">
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="radio" name="post" value="L" required style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">［L］リーダー</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="radio" name="post" value="S" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">［S］サポーター</span>
+      </label>
+    </div>
+  </div>
+
   <hr class="section-divider">
 
   <!-- 業務時間 -->
@@ -444,6 +459,7 @@
   <table class="confirm-table">
     <tr><th>日付</th><td id="c_date"></td></tr>
     <tr><th>氏名</th><td id="c_member"></td></tr>
+    <tr><th>ポスト区分</th><td id="c_post"></td></tr>
     <tr><th>業務時間</th><td id="c_time"></td></tr>
     <tr><th>イベント名／実施業務</th><td id="c_title"></td></tr>
     <tr><th>実施事項</th><td id="c_tasks"></td></tr>
@@ -561,9 +577,17 @@
       return;
     }
 
+    const postVal = document.querySelector('input[name="post"]:checked');
+    if (!postVal) {
+      status.textContent = 'ポスト区分を選択してください。';
+      status.className = 'error';
+      return;
+    }
+
     pendingPayload = {
       date:       document.getElementById('date').value,
       member:     document.getElementById('member').value,
+      post:       postVal.value,
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em_val}`,
       title:      document.getElementById('title').value,
@@ -576,6 +600,7 @@
     // 確認画面に値をセット
     document.getElementById('c_date').textContent = pendingPayload.date;
     document.getElementById('c_member').textContent = pendingPayload.member;
+    document.getElementById('c_post').textContent = pendingPayload.post === 'L' ? '［L］リーダー' : '［S］サポーター';
     document.getElementById('c_time').textContent = pendingPayload.start_time + ' 〜 ' + pendingPayload.end_time;
     document.getElementById('c_title').textContent = pendingPayload.title;
     document.getElementById('c_tasks').textContent = pendingPayload.tasks || '（未入力）';

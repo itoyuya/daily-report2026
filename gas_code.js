@@ -73,7 +73,7 @@ function doPost(e) {
     if (!sheet) {
       sheet = ss.insertSheet(CONFIG.SHEET_NAME);
       sheet.appendRow([
-        'タイムスタンプ', '日付', '氏名',
+        'タイムスタンプ', '日付', '氏名', 'ポスト区分',
         '開始時間', '終了時間',
         'イベント名／実施業務', '実施事項', '業務内容', '特記事項等',
         '気づき・振り返り', '勤務時間'
@@ -94,6 +94,7 @@ function doPost(e) {
       new Date(),
       data.date,
       data.member,
+      data.post || '',
       data.start_time,
       data.end_time,
       data.title,
@@ -157,8 +158,8 @@ function generateDailyReport(dateStr) {
   const dateDisplay = '令和' + reiwa + '年' + (date.getMonth() + 1) + '月' + date.getDate() + '日（' + weekdays[date.getDay()] + '）';
 
   // 全メンバー分を1ページにcombine
-  // row: [タイムスタンプ, 日付, 氏名, 開始, 終了, タイトル, 実施事項, 内容, 特記事項等, 気づき・振り返り, 勤務時間]
-  //        0            1     2     3     4     5        6        7      8            9             10
+  // row: [タイムスタンプ, 日付, 氏名, ポスト区分, 開始, 終了, タイトル, 実施事項, 内容, 特記事項等, 気づき・振り返り, 勤務時間]
+  //        0            1     2     3           4     5     6        7        8      9            10             11
   // 勤務シフト: 時間のみ表示（HH:MM形式）
   var formatTime = function(val) {
     if (!val) return '';
@@ -174,13 +175,15 @@ function generateDailyReport(dateStr) {
     if (m) return m[1];
     return s;
   };
+  var postLabel = function(v) { return v === 'L' ? 'リーダー' : v === 'S' ? 'サポーター' : ''; };
   var shifts = rows.map(function(r) {
-    return (r[2] || '') + '：' + formatTime(r[3]) + '〜' + formatTime(r[4]) + '（' + r[10] + 'h）';
+    var post = r[3] ? '(' + postLabel(r[3]) + ')' : '';
+    return (r[2] || '') + post + '：' + formatTime(r[4]) + '〜' + formatTime(r[5]) + '（' + r[11] + 'h）';
   }).join('\n');
   // イベント名／実施業務: 重複を除去
   var titleSet = {};
   rows.forEach(function(r) {
-    var t = (r[5] || '').trim();
+    var t = (r[6] || '').trim();
     if (t) titleSet[t] = true;
   });
   var titles = Object.keys(titleSet).join('\n');
@@ -194,15 +197,15 @@ function generateDailyReport(dateStr) {
       return String(r[idx]);
     }).filter(Boolean).join('\n');
   };
-  var tasks = combineField(6);
-  var contents = combineField(7);
+  var tasks = combineField(7);
+  var contents = combineField(8);
   // 特記事項等: 名前と内容を同一行に（【名前】内容...）
   var notes = rows.map(function(r) {
-    if (!r[8]) return null;
+    if (!r[9]) return null;
     if (rows.length > 1) {
-      return '【' + (r[2] || '') + '】' + r[8];
+      return '【' + (r[2] || '') + '】' + r[9];
     }
-    return String(r[8]);
+    return String(r[9]);
   }).filter(Boolean).join('\n');
 
   var page = buildPage({
