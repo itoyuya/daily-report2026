@@ -405,14 +405,34 @@
 
   <!-- イベント名／実施業務 -->
   <div class="field">
-    <label for="title">イベント名／実施業務 <span class="req">*</span></label>
-    <div class="hint">
-      事業やイベント名は略称ではなく正式名称を入力してください。<br>
-      例）アートインキュベーションプログラム（市原えつこ）<br>
-      例）キャンプ／ショーケース／ワークショップ／ミートアップ<br>
-      例）ラボ運営および施設管理
+    <label>イベント名／実施業務 <span class="req">*</span></label>
+    <div class="hint">該当するものをすべて選択してください（複数選択可）</div>
+    <div id="title_checks" style="display:flex; flex-direction:column; gap:10px; margin-top:4px;">
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="アートインキュベーションプログラム" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">アートインキュベーションプログラム</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="キャンプ" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">キャンプ</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="ショーケース" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">ショーケース</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="ワークショップ" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">ワークショップ</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="ミートアップ" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">ミートアップ</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" name="title" value="ラボ運営および施設管理" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">ラボ運営および施設管理</span>
+      </label>
     </div>
-    <textarea id="title" name="title" rows="3" placeholder="例：&#10;・アートインキュベーションプログラム（市原えつこ）&#10;・ラボ運営および施設管理" required></textarea>
   </div>
 
   <!-- 実施事項 -->
@@ -587,13 +607,20 @@
       return;
     }
 
+    const titleChecked = Array.from(document.querySelectorAll('input[name="title"]:checked')).map(cb => cb.value);
+    if (titleChecked.length === 0) {
+      status.textContent = 'イベント名／実施業務を選択してください。';
+      status.className = 'error';
+      return;
+    }
+
     pendingPayload = {
       date:       document.getElementById('date').value,
       member:     document.getElementById('member').value,
       post:       postVal.value,
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em_val}`,
-      title:      document.getElementById('title').value,
+      title:      titleChecked.join('\n'),
       tasks:      document.getElementById('tasks').value,
       content:    document.getElementById('content').value,
       notes:      document.getElementById('notes').value,
