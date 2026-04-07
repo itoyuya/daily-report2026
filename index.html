@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>日報フォーム</title>
+<title>CCBT 2026年 業務報告フォーム</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
 
@@ -477,7 +477,10 @@
 <div id="donePage">
   <div class="done-msg">送信できました。お疲れさまでした。</div>
   <div class="done-sub">日報が記録されました</div>
-  <button class="btn btn-primary" id="newBtn">新しい日報を書く</button>
+  <div class="btn-row" style="justify-content:center; margin-top:8px;">
+    <button class="btn btn-secondary" id="continueBtn">別ポストの業務を続けて報告する</button>
+    <button class="btn btn-primary" id="newBtn">新しい日報を書く</button>
+  </div>
 </div>
 
 <script>
@@ -623,6 +626,10 @@
     sendBtn.textContent = '送信中…';
 
     try {
+      // 送信前に日付・氏名を保持
+      const keepDate = pendingPayload.date;
+      const keepMember = pendingPayload.member;
+
       await fetch(GAS_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -633,6 +640,9 @@
       formEl.reset();
       document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
       document.getElementById('duration_display').textContent = '';
+      // 次の「続けて報告」用に保持
+      donePage.dataset.keepDate = keepDate;
+      donePage.dataset.keepMember = keepMember;
       showDone();
     } catch (err) {
       alert('送信に失敗しました。\n' + err.message);
@@ -640,6 +650,16 @@
 
     sendBtn.disabled = false;
     sendBtn.textContent = '送信する';
+  });
+
+  // ── 別ポスト続けて報告ボタン ──
+  document.getElementById('continueBtn').addEventListener('click', () => {
+    const keepDate = donePage.dataset.keepDate;
+    const keepMember = donePage.dataset.keepMember;
+    // 日付・氏名を復元
+    if (keepDate) document.getElementById('date').value = keepDate;
+    if (keepMember) document.getElementById('member').value = keepMember;
+    showForm();
   });
 
   // ── 新しい日報ボタン ──
