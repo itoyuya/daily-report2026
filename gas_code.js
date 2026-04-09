@@ -8,18 +8,24 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── 設定 ──────────────────────────
-const CONFIG = {
+var CONFIG = {
   SHEET_NAME: '日報_2026',
 };
+
+// ── 数式インジェクション防止 ──────────────────
+function sanitize(val) {
+  if (typeof val !== 'string') return val;
+  return /^[=+\-@]/.test(val) ? "'" + val : val;
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // doPost: フォームからのデータ受信
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+    var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
 
     if (!sheet) {
       sheet = ss.insertSheet(CONFIG.SHEET_NAME);
@@ -43,16 +49,16 @@ function doPost(e) {
 
     sheet.appendRow([
       new Date(),
-      data.date,
-      data.member,
-      data.post || '',
-      data.start_time,
-      data.end_time,
-      data.title,
-      data.tasks,
-      data.content,
-      data.notes,
-      data.reflection,
+      sanitize(data.date),
+      sanitize(data.member),
+      sanitize(data.post || ''),
+      sanitize(data.start_time),
+      sanitize(data.end_time),
+      sanitize(data.title),
+      sanitize(data.tasks),
+      sanitize(data.content),
+      sanitize(data.notes),
+      sanitize(data.reflection),
       hours,
     ]);
 
