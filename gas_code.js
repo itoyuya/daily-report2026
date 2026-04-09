@@ -228,7 +228,7 @@ function generateDailyReport(dateStr) {
     '{{tasks}}': tasks,
     '{{content}}': contents,
     '{{shift}}': shifts,
-    '{{notes}}': notes,
+    '{{notes}}': notes || '特記事項なし',
     '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
   };
 
