@@ -12,7 +12,7 @@ const CONFIG = {
   DATA_SPREADSHEET_ID: '16I5MK1Tqv2_UXi-I8VYHSO22iAO-joNpV_PrejHntVQ',  // 閲覧用（日報データ）
   SHEET_NAME: '日報_2026',
   TEMPLATE_SHEET_NAME: 'テンプレート_日報',
-  DRIVE_FOLDER_ID: '1nqFYO3mjOcwupn--p1Q7Bh8y-SAtTOl5',
+  DRIVE_FOLDER_ID: '1Nx9ALl1p1Riun68L9l9OJpG19UyCDpkj',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
 };
 
