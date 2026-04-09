@@ -11,8 +11,8 @@
 // ── 設定 ──────────────────────────
 const CONFIG = {
   SHEET_NAME: '日報_2026',
+  TEMPLATE_SHEET_NAME: 'テンプレート_日報',
   DRIVE_FOLDER_ID: '1nqFYO3mjOcwupn--p1Q7Bh8y-SAtTOl5',   // ← Google DriveフォルダIDに変更
-  COMPANY_NAME: 'arsaffix Inc.',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
 };
 
@@ -208,23 +208,44 @@ function generateDailyReport(dateStr) {
     return String(r[9]);
   }).filter(Boolean).join('\n');
 
-  var page = buildPage({
-    date: dateDisplay,
-    shift: shifts,
-    title: titles,
-    tasks: tasks,
-    content: contents,
-    notes: notes,
-    responsible: CONFIG.RESPONSIBLE_PERSON,
-    company: CONFIG.COMPANY_NAME,
-  });
+  // ── テンプレートシートをコピーしてデータを流し込む ──
+  var templateSheet = ss.getSheetByName(CONFIG.TEMPLATE_SHEET_NAME);
+  if (!templateSheet) throw new Error('「' + CONFIG.TEMPLATE_SHEET_NAME + '」シートが見つかりません');
 
-  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-    + '<style>' + getReportCss() + '</style>'
-    + '</head><body>' + page + '</body></html>';
+  var tmpName = '_tmp_日報_' + dateStr;
+  var tmpSheet = templateSheet.copyTo(ss).setName(tmpName);
 
-  // PDF生成: HTMLをGoogle Docsに変換 → PDFエクスポート（正規PDF）
-  // ※ Drive API v2サービスを有効にする必要あり（Apps Script > サービス > Drive API）
+  // プレースホルダを置換
+  var replacements = {
+    '{{date}}': dateDisplay,
+    '{{title}}': titles,
+    '{{tasks}}': tasks,
+    '{{content}}': contents,
+    '{{shift}}': shifts,
+    '{{notes}}': notes,
+    '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
+  };
+
+  var range = tmpSheet.getDataRange();
+  var values = range.getValues();
+  for (var i = 0; i < values.length; i++) {
+    for (var j = 0; j < values[i].length; j++) {
+      var cell = values[i][j];
+      if (typeof cell === 'string' && cell.indexOf('{{') !== -1) {
+        var newVal = cell;
+        for (var key in replacements) {
+          newVal = newVal.replace(key, replacements[key] || '');
+        }
+        if (newVal !== cell) {
+          tmpSheet.getRange(i + 1, j + 1).setValue(newVal);
+        }
+      }
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  // ── 一時シートをPDFとしてエクスポート ──
   var folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
   var fileName = '業務日報_' + dateStr;
 
@@ -234,24 +255,28 @@ function generateDailyReport(dateStr) {
     existing.next().setTrashed(true);
   }
 
-  // HTMLをGoogle Docsとして変換アップロード
-  var htmlBlob = Utilities.newBlob(html, 'text/html', fileName + '.html');
-  var docFile = Drive.Files.insert(
-    { title: fileName, parents: [{ id: CONFIG.DRIVE_FOLDER_ID }] },
-    htmlBlob,
-    { convert: true }
-  );
+  var ssId = ss.getId();
+  var sheetId = tmpSheet.getSheetId();
+  var pdfUrl = 'https://docs.google.com/spreadsheets/d/' + ssId + '/export?'
+    + 'format=pdf'
+    + '&gid=' + sheetId
+    + '&size=A4'
+    + '&portrait=true'
+    + '&fitw=true'
+    + '&gridlines=false'
+    + '&printtitle=false'
+    + '&sheetnames=false'
+    + '&pagenum=UNDEFINED'
+    + '&fzr=false';
 
-  // Google DocsからPDFとしてエクスポート
-  var pdfBlob = UrlFetchApp.fetch(
-    'https://docs.google.com/document/d/' + docFile.id + '/export?format=pdf',
-    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }
-  ).getBlob().setName(fileName + '.pdf');
+  var pdfBlob = UrlFetchApp.fetch(pdfUrl, {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
+  }).getBlob().setName(fileName + '.pdf');
 
   var pdfFile = folder.createFile(pdfBlob);
 
-  // 中間のGoogle Docsを削除
-  DriveApp.getFileById(docFile.id).setTrashed(true);
+  // 一時シートを削除
+  ss.deleteSheet(tmpSheet);
 
   Logger.log('PDF保存完了: ' + pdfFile.getUrl());
   return pdfFile.getUrl();
@@ -292,68 +317,3 @@ function generateMonthlyReports(yearMonth) {
   return urls;
 }
 
-// ── 1ページ分のHTML ──────────────────────
-function buildPage(d) {
-  var nl2br = function(str) {
-    return (str || '').replace(/\n/g, '<br>');
-  };
-
-  var th = 'style="border:1px solid #000;padding:4px 8px;vertical-align:top;font-size:9pt;font-weight:bold;background:#f8f8f8;text-align:left;white-space:nowrap;width:15%;"';
-  var td = 'style="border:1px solid #000;padding:4px 8px;vertical-align:top;font-size:9pt;line-height:1.4;width:85%;"';
-
-  return ''
-    + '<div>'
-    + '  <p style="text-align:center;font-size:18pt;font-weight:bold;margin-bottom:10px;">テクニカルサポート業務日報</p>'
-    + ''
-    + '  <table style="width:100%;border-collapse:collapse;margin-bottom:10px;"><tr>'
-    + '    <td style="border:none;padding:0;vertical-align:bottom;text-align:left;font-size:10pt;">' + d.date + '</td>'
-    + '    <td style="border:none;padding:0;vertical-align:bottom;text-align:right;">'
-    + '      <table style="border-collapse:collapse;margin-left:auto;"><tr>'
-    + '        <td colspan="4" style="border:none;font-size:8pt;padding:2px 4px;">※押印欄</td>'
-    + '      </tr><tr>'
-    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
-    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
-    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
-    + '        <td style="border:1px solid #000;padding:0 2px;font-size:9pt;">&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;</td>'
-    + '      </tr></table>'
-    + '    </td>'
-    + '  </tr></table>'
-    + ''
-    + '  <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">'
-    + '    <tr><td ' + th + '>イベント名／<br>実施業務</td><td ' + td + '>' + nl2br(d.title) + '</td></tr>'
-    + '    <tr><td ' + th + '>実施事項</td><td ' + td + '>' + nl2br(d.tasks) + '</td></tr>'
-    + '    <tr><td ' + th + '>業務内容</td><td ' + td + '>' + nl2br(d.content) + '</td></tr>'
-    + '    <tr><td ' + th + '>勤務シフト</td><td ' + td + '>' + nl2br(d.shift) + '</td></tr>'
-    + '    <tr><td ' + th + '>特記事項等</td><td ' + td + '>' + nl2br(d.notes) + '</td></tr>'
-    + '    <tr><td ' + th + '>責任者氏名</td><td ' + td + '>' + d.responsible + '</td></tr>'
-    + '  </table>'
-    + ''
-    + '  <p style="text-align:center;font-size:10pt;">' + d.company + '</p>'
-    + '</div>';
-}
-
-// ── PDF用CSS ─────────────────────────
-function getReportCss() {
-  return ''
-    + '@page { size: A4 portrait; margin: 15mm 15mm 15mm 15mm; }'
-    + 'body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic Pro", "Yu Gothic", sans-serif; font-size: 10.5pt; color: #000; margin: 0; padding: 0; line-height: 1.25; }'
-    + '.page { position: relative; }'
-    + ''
-    + 'h1 { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 14px; }'
-    + ''
-    + '.header-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }'
-    + '.header-table td { border: none; padding: 0; vertical-align: bottom; }'
-    + '.header-date { text-align: left; font-size: 10.5pt; }'
-    + '.header-stamp { text-align: right; }'
-    + ''
-    + '.stamp-table { border-collapse: collapse; display: inline-table; }'
-    + '.stamp-label { font-size: 9pt; text-align: left; padding: 2px 4px; border: none; }'
-    + '.stamp-cell { width: 60px; height: 60px; border: 1px solid #000; }'
-    + ''
-    + '.report-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }'
-    + '.report-table th, .report-table td { border: 1px solid #000; padding: 6px 10px; vertical-align: top; font-size: 10pt; line-height: 1.25; }'
-    + '.report-table th { width: 22%; font-weight: bold; background: #f8f8f8; text-align: left; white-space: nowrap; }'
-    + '.report-table td { width: 78%; }'
-    + ''
-    + '.company { text-align: center; font-size: 10.5pt; margin-top: 10px; }';
-}
