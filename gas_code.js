@@ -180,21 +180,27 @@ function generateDailyReport(dateStr) {
     var post = r[3] ? '(' + postLabel(r[3]) + ')' : '';
     return (r[2] || '') + post + '：' + formatTime(r[4]) + '〜' + formatTime(r[5]) + '（' + r[11] + 'h）';
   }).join('\n');
-  // イベント名／実施業務: 重複を除去
+  // イベント名／実施業務: 個々の項目単位で重複を除去
   var titleSet = {};
   rows.forEach(function(r) {
-    var t = (r[6] || '').trim();
-    if (t) titleSet[t] = true;
+    var t = String(r[6] || '').trim();
+    if (t) {
+      t.split('\n').forEach(function(item) {
+        var trimmed = item.trim();
+        if (trimmed) titleSet[trimmed] = true;
+      });
+    }
   });
   var titles = Object.keys(titleSet).join('\n');
-  // 実施事項・業務内容: 【名前】内容... を同一行に（コンパクト表示）
+  // 実施事項・業務内容: 【名前】内容... 改行は「／」に置換して1行表示
   var combineField = function(idx) {
     return rows.map(function(r) {
       if (!r[idx]) return null;
+      var text = String(r[idx]).replace(/\n/g, '／');
       if (rows.length > 1) {
-        return '【' + (r[2] || '') + '】' + r[idx];
+        return '【' + (r[2] || '') + '】' + text;
       }
-      return String(r[idx]);
+      return text;
     }).filter(Boolean).join('\n');
   };
   var tasks = combineField(7);
