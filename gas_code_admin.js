@@ -81,19 +81,30 @@ function generateDailyReport(dateStr) {
     return generateMonthlyReports(dateStr);
   }
 
-  // 閲覧用スプレッドシートからデータを取得
+  var allRows = fetchAllRows_();
+  var rows = allRows.filter(function(row) { return toDateStr(row[1]) === dateStr; });
+  return generatePdfForDate_(dateStr, rows);
+}
+
+// ── データ取得（キャッシュ付き） ──────────────────
+var cachedRows_ = null;
+function fetchAllRows_() {
+  if (cachedRows_) return cachedRows_;
   var dataSs = SpreadsheetApp.openById(CONFIG.DATA_SPREADSHEET_ID);
   var dataSheet = dataSs.getSheetByName(CONFIG.SHEET_NAME);
   if (!dataSheet) throw new Error('閲覧用スプレッドシートに「' + CONFIG.SHEET_NAME + '」シートが見つかりません');
+  cachedRows_ = dataSheet.getDataRange().getValues().slice(1);
+  return cachedRows_;
+}
 
-  var data = dataSheet.getDataRange().getValues();
-  var rows = data.slice(1).filter(function(row) { return toDateStr(row[1]) === dateStr; });
-
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// generatePdfForDate_: 1日分のPDFを生成しDriveに保存
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function generatePdfForDate_(dateStr, rows) {
   if (rows.length === 0) {
     throw new Error(dateStr + ' のデータが見つかりません');
   }
 
-  // 管理用スプレッドシート（テンプレート・一時シート用）
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // 日付を和暦に変換
@@ -182,7 +193,7 @@ function generateDailyReport(dateStr) {
       if (typeof cell === 'string' && cell.indexOf('{{') !== -1) {
         var newVal = cell;
         for (var key in replacements) {
-          newVal = newVal.replace(key, replacements[key] || '');
+          newVal = newVal.split(key).join(replacements[key] || '');
         }
         if (newVal !== cell) {
           tmpSheet.getRange(i + 1, j + 1).setValue(newVal);
@@ -216,36 +227,36 @@ function generateDailyReport(dateStr) {
     + '&pagenum=UNDEFINED'
     + '&fzr=false';
 
-  var pdfBlob = UrlFetchApp.fetch(pdfUrl, {
-    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
-  }).getBlob().setName(fileName + '.pdf');
+  try {
+    var pdfBlob = UrlFetchApp.fetch(pdfUrl, {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
+    }).getBlob().setName(fileName + '.pdf');
 
-  var pdfFile = folder.createFile(pdfBlob);
-
-  ss.deleteSheet(tmpSheet);
-
-  Logger.log('PDF保存完了: ' + pdfFile.getUrl());
-  return pdfFile.getUrl();
+    var pdfFile = folder.createFile(pdfBlob);
+    Logger.log('PDF保存完了: ' + pdfFile.getUrl());
+    return pdfFile.getUrl();
+  } finally {
+    ss.deleteSheet(tmpSheet);
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // generateMonthlyReports: 指定月の全日分PDFを一括生成
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function generateMonthlyReports(yearMonth) {
-  var dataSs = SpreadsheetApp.openById(CONFIG.DATA_SPREADSHEET_ID);
-  var dataSheet = dataSs.getSheetByName(CONFIG.SHEET_NAME);
-  if (!dataSheet) throw new Error('閲覧用スプレッドシートに「' + CONFIG.SHEET_NAME + '」シートが見つかりません');
+  var allRows = fetchAllRows_();
 
-  var data = dataSheet.getDataRange().getValues();
-  var dates = {};
-  data.slice(1).forEach(function(row) {
+  // 日付ごとにグループ化
+  var grouped = {};
+  allRows.forEach(function(row) {
     var d = toDateStr(row[1]);
-    if (d && d.indexOf(yearMonth) === 0) {
-      dates[d] = true;
+    if (d && d.substring(0, 7) === yearMonth) {
+      if (!grouped[d]) grouped[d] = [];
+      grouped[d].push(row);
     }
   });
 
-  var dateList = Object.keys(dates).sort();
+  var dateList = Object.keys(grouped).sort();
   if (dateList.length === 0) {
     throw new Error(yearMonth + ' のデータが見つかりません');
   }
@@ -254,7 +265,7 @@ function generateMonthlyReports(yearMonth) {
 
   var urls = [];
   dateList.forEach(function(dateStr) {
-    var url = generateDailyReport(dateStr);
+    var url = generatePdfForDate_(dateStr, grouped[dateStr]);
     urls.push(dateStr + ': ' + url);
   });
 
