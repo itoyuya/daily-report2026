@@ -340,7 +340,9 @@
       <option>ガムゼ</option>
       <option>佐藤</option>
       <option>田部井</option>
+      <option value="__other__">その他（手入力）</option>
     </select>
+    <input type="text" id="member_other" placeholder="氏名を入力してください" style="display:none; margin-top:6px;">
   </div>
 
   <!-- ポスト区分 -->
@@ -552,6 +554,21 @@
     document.getElementById(id).addEventListener('change', updateDuration);
   });
 
+  // ── 「その他」氏名入力の表示切替 ──
+  const memberSelect = document.getElementById('member');
+  const memberOther = document.getElementById('member_other');
+  memberSelect.addEventListener('change', () => {
+    if (memberSelect.value === '__other__') {
+      memberOther.style.display = '';
+      memberOther.required = true;
+      memberOther.focus();
+    } else {
+      memberOther.style.display = 'none';
+      memberOther.required = false;
+      memberOther.value = '';
+    }
+  });
+
   // ── 画面切り替え ──
   const formEl = document.getElementById('reportForm');
   const headerEl = document.querySelector('header');
@@ -616,7 +633,7 @@
 
     pendingPayload = {
       date:       document.getElementById('date').value,
-      member:     document.getElementById('member').value,
+      member:     memberSelect.value === '__other__' ? memberOther.value : memberSelect.value,
       post:       postVal.value,
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em_val}`,
@@ -667,9 +684,12 @@
       formEl.reset();
       document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
       document.getElementById('duration_display').textContent = '';
+      memberOther.style.display = 'none';
+      memberOther.required = false;
       // 次の「続けて報告」用に保持
       donePage.dataset.keepDate = keepDate;
       donePage.dataset.keepMember = keepMember;
+      donePage.dataset.keepMemberIsOther = memberSelect.value === '__other__';
       showDone();
     } catch (err) {
       alert('送信に失敗しました。\n' + err.message);
@@ -683,9 +703,19 @@
   document.getElementById('continueBtn').addEventListener('click', () => {
     const keepDate = donePage.dataset.keepDate;
     const keepMember = donePage.dataset.keepMember;
+    const keepMemberIsOther = donePage.dataset.keepMemberIsOther === 'true';
     // 日付・氏名を復元
     if (keepDate) document.getElementById('date').value = keepDate;
-    if (keepMember) document.getElementById('member').value = keepMember;
+    if (keepMember) {
+      if (keepMemberIsOther) {
+        memberSelect.value = '__other__';
+        memberOther.style.display = '';
+        memberOther.required = true;
+        memberOther.value = keepMember;
+      } else {
+        memberSelect.value = keepMember;
+      }
+    }
     showForm();
   });
 
