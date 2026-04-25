@@ -552,7 +552,8 @@
     if (mins < 0) mins += 24 * 60;
     const h = Math.floor(mins / 60);
     const m = mins % 60;
-    el.textContent = `→ 勤務時間：${h}時間${m > 0 ? m + '分' : ''}`;
+    const overnight = e - s < 0;
+    el.textContent = `→ 勤務時間：${h}時間${m > 0 ? m + '分' : ''}${overnight ? '（日跨ぎ）' : ''}`;
   }
   ['start_h','start_m','end_h','end_m'].forEach(id => {
     document.getElementById(id).addEventListener('change', updateDuration);
