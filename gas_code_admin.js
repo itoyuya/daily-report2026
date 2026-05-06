@@ -228,15 +228,37 @@ function generatePdfForDate_(dateStr, rows) {
     + '&fzr=false';
 
   try {
-    var pdfBlob = UrlFetchApp.fetch(pdfUrl, {
-      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
-    }).getBlob().setName(fileName + '.pdf');
-
+    var pdfBlob = fetchPdfWithRetry_(pdfUrl, fileName);
     var pdfFile = folder.createFile(pdfBlob);
     Logger.log('PDF保存完了: ' + pdfFile.getUrl());
     return pdfFile.getUrl();
   } finally {
     ss.deleteSheet(tmpSheet);
+  }
+}
+
+// ── PDFエクスポート（429/5xx は指数バックオフでリトライ） ──
+function fetchPdfWithRetry_(pdfUrl, fileName) {
+  var maxAttempts = 5;
+  var delayMs = 1500;
+  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    var response = UrlFetchApp.fetch(pdfUrl, {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true,
+    });
+    var code = response.getResponseCode();
+    if (code === 200) {
+      return response.getBlob().setName(fileName + '.pdf');
+    }
+    if (code === 429 || code >= 500) {
+      if (attempt === maxAttempts) {
+        throw new Error('PDFエクスポートのレート制限に達しました（HTTP ' + code + '）。1〜2分ほど待ってから再実行してください。');
+      }
+      Utilities.sleep(delayMs);
+      delayMs *= 2;
+      continue;
+    }
+    throw new Error('PDFエクスポートに失敗しました（HTTP ' + code + '）');
   }
 }
 
@@ -264,7 +286,8 @@ function generateMonthlyReports(yearMonth) {
   Logger.log(yearMonth + ': ' + dateList.length + '日分のPDFを生成します');
 
   var urls = [];
-  dateList.forEach(function(dateStr) {
+  dateList.forEach(function(dateStr, idx) {
+    if (idx > 0) Utilities.sleep(800);
     var url = generatePdfForDate_(dateStr, grouped[dateStr]);
     urls.push(dateStr + ': ' + url);
   });
