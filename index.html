@@ -515,12 +515,15 @@
   const GAS_URL = "https://script.google.com/macros/s/AKfycbwRnGR5PqKAD4gOfTDSNabdn3ZJ5M8yP57ulCHP3sTiImycLP1U0jgDIOmHG8Q_GB_R/exec";
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  // 日付のデフォルトを今日に
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
-  document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
+  // 日付のデフォルトを今日に（呼び出し時点の日付を毎回計算）
+  function getTodayStr() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  document.getElementById('date').value = getTodayStr();
 
   // 時セレクトを 0〜23 で生成
   function buildHourOptions(selectId) {
@@ -611,6 +614,19 @@
     status.className = '';
     status.style.display = 'none';
 
+    if (!memberSelect.value) {
+      status.textContent = '氏名を選択してください。';
+      status.className = 'error';
+      memberSelect.focus();
+      return;
+    }
+    if (memberSelect.value === '__other__' && !memberOther.value.trim()) {
+      status.textContent = '氏名を入力してください。';
+      status.className = 'error';
+      memberOther.focus();
+      return;
+    }
+
     const sh = document.getElementById('start_h').value;
     const sm = document.getElementById('start_m').value;
     const eh = document.getElementById('end_h').value;
@@ -638,7 +654,7 @@
 
     pendingPayload = {
       date:       document.getElementById('date').value,
-      member:     memberSelect.value === '__other__' ? memberOther.value : memberSelect.value,
+      member:     memberSelect.value === '__other__' ? memberOther.value.trim() : memberSelect.value,
       post:       postVal.value,
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em_val}`,
@@ -687,7 +703,7 @@
       });
 
       formEl.reset();
-      document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
+      document.getElementById('date').value = getTodayStr();
       document.getElementById('duration_display').textContent = '';
       memberOther.style.display = 'none';
       memberOther.required = false;
@@ -726,6 +742,7 @@
 
   // ── 新しい日報ボタン ──
   document.getElementById('newBtn').addEventListener('click', () => {
+    document.getElementById('date').value = getTodayStr();
     showForm();
   });
 </script>
