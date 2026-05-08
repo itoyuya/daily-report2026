@@ -1,10 +1,16 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// テクニカルサポート業務日報 PDF生成 — 管理用スプレッドシート版
+// 管理用スプレッドシート（CCBTテクニカル業務 実績管理 2026）の Apps Script
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 使い方:
-//   1. 管理用スプレッドシートの「拡張機能 → Apps Script」に貼り付け
-//   2. 管理用スプレッドシートに「テンプレート_日報」シートを作成
-//   3. メニュー「日報PDF → PDF出力」で実行
+// 機能:
+//   - メニュー「日報PDF → PDF出力」: 「設定」シート B1 の年月日でPDF生成
+//                                    （要: 「テンプレート_日報」シート）
+//   - メニュー「割り振り → 取り込み」: #2 のデータを「割り振り台帳」に増分同期
+//   - メニュー「割り振り → 自動取り込みをON/OFF」: シート起動時の自動同期
+//
+// セットアップ:
+//   1. 管理用スプレッドシートの「拡張機能 → Apps Script」にこのファイルを貼り付け
+//   2. 「テンプレート_日報」シートを作成（PDF出力用）
+//   3. メニューが現れない場合はシートを再読込
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── 設定 ──────────────────────────
@@ -14,15 +20,49 @@ const CONFIG = {
   TEMPLATE_SHEET_NAME: 'テンプレート_日報',
   DRIVE_FOLDER_ID: '1Nx9ALl1p1Riun68L9l9OJpG19UyCDpkj',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
+  ALLOCATION_SHEET_NAME: '割り振り台帳',
 };
+
+// ── 4請求項目の定義（割り振り台帳用） ──────────────────
+//   key: 内部キー
+//   label: 列ヘッダー
+//   col: 1-indexed の列番号
+//   eligible: 計上可能なポスト区分
+var BILLING_ITEMS = [
+  { key: 'item1', label: '①実施計画 (h)',           col: 12, eligible: ['L'] },       // 実施計画策定・全体管理
+  { key: 'item2', label: '②機器運用 (h)',           col: 13, eligible: ['L', 'S'] },  // 機器運用
+  { key: 'item3', label: '③設営・技術支援 (h)',     col: 14, eligible: ['L', 'S'] },  // 設営管理・技術支援
+  { key: 'item4', label: '④事業マネジメント (h)',   col: 15, eligible: ['L'] },       // 各事業におけるテクニカルマネジメント
+];
+
+// 割り振り台帳の列番号（1-indexed）
+var ALLOC_COL = {
+  TIMESTAMP: 1, DATE: 2, NAME: 3, POST: 4, START: 5, END: 6,
+  HOURS: 7, EVENT: 8, TASKS: 9, CONTENT: 10, NOTES: 11,
+  ITEM1: 12, ITEM2: 13, ITEM3: 14, ITEM4: 15,
+  ALLOC_SUM: 16, ALLOC_DIFF: 17, MEMO: 18,
+};
+
+var ALLOCATION_HEADERS = [
+  'タイムスタンプ', '日付', '氏名', 'ポスト', '開始', '終了',
+  '勤務時間 (h)', 'イベント', '実施事項', '業務内容', '特記事項',
+  '①実施計画 (h)', '②機器運用 (h)', '③設営・技術支援 (h)', '④事業マネジメント (h)',
+  '配分計 (h)', '差異 (h)', 'メモ',
+];
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // メニュー: スプレッドシートを開いたときにカスタムメニューを追加
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('日報PDF')
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('日報PDF')
     .addItem('PDF出力（設定シートの年月を使用）', 'runFromSheet')
+    .addToUi();
+  ui.createMenu('割り振り')
+    .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
+    .addSeparator()
+    .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
+    .addItem('自動取り込みをOFF', 'removeAutoSyncTrigger')
     .addToUi();
 }
 
@@ -294,4 +334,222 @@ function generateMonthlyReports(yearMonth) {
 
   Logger.log('一括生成完了:\n' + urls.join('\n'));
   return urls;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 割り振り台帳: #2のデータを取り込み、4請求項目への時間配分を入力する場所
+//   - 取り込みは増分のみ（タイムスタンプをキーに重複排除）
+//   - 4項目列(L〜O)は0.25h刻みのデータ検証
+//   - 配分計≠勤務時間 のとき差異列を赤
+//   - Sポスト × 項目1/4 のとき該当セルを赤（制約違反警告）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ── メニュー: 手動取り込み ──
+function runSyncAllocation() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var n = syncAllocationSheet();
+    if (n === 0) {
+      ui.alert('割り振り台帳: 新しいデータはありませんでした。');
+    } else {
+      ui.alert('割り振り台帳: ' + n + '件追加しました。');
+    }
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
+}
+
+// ── メニュー: 自動取り込みトリガーを有効化 ──
+function installAutoSyncTrigger() {
+  var ui = SpreadsheetApp.getUi();
+  removeAutoSyncTriggers_();
+  ScriptApp.newTrigger('onOpenAutoSync')
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onOpen()
+    .create();
+  ui.alert('自動取り込みを有効化しました。\n次回シートを開いたときから自動で取り込みます。');
+}
+
+function removeAutoSyncTrigger() {
+  var n = removeAutoSyncTriggers_();
+  SpreadsheetApp.getUi().alert('自動取り込みを解除しました（' + n + '件）。');
+}
+
+function removeAutoSyncTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var removed = 0;
+  triggers.forEach(function(t) {
+    if (t.getHandlerFunction() === 'onOpenAutoSync') {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  });
+  return removed;
+}
+
+// ── installable trigger ハンドラ（自動取り込み用） ──
+function onOpenAutoSync() {
+  try {
+    syncAllocationSheet();
+  } catch (e) {
+    Logger.log('自動取り込み失敗: ' + e.message);
+  }
+}
+
+// ── 割り振り台帳シートの初期化（無ければ作る） ──
+function ensureAllocationSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.ALLOCATION_SHEET_NAME);
+  if (sheet) return sheet;
+
+  sheet = ss.insertSheet(CONFIG.ALLOCATION_SHEET_NAME);
+
+  // ヘッダー
+  sheet.getRange(1, 1, 1, ALLOCATION_HEADERS.length)
+    .setValues([ALLOCATION_HEADERS])
+    .setFontWeight('bold')
+    .setBackground('#e8eaed');
+  sheet.setFrozenRows(1);
+  sheet.setFrozenColumns(4);
+
+  // 列幅
+  sheet.setColumnWidth(ALLOC_COL.TIMESTAMP, 140);
+  sheet.setColumnWidth(ALLOC_COL.DATE, 90);
+  sheet.setColumnWidth(ALLOC_COL.NAME, 80);
+  sheet.setColumnWidth(ALLOC_COL.POST, 50);
+  sheet.setColumnWidth(ALLOC_COL.START, 60);
+  sheet.setColumnWidth(ALLOC_COL.END, 60);
+  sheet.setColumnWidth(ALLOC_COL.HOURS, 80);
+  sheet.setColumnWidth(ALLOC_COL.EVENT, 200);
+  sheet.setColumnWidth(ALLOC_COL.TASKS, 200);
+  sheet.setColumnWidth(ALLOC_COL.CONTENT, 200);
+  sheet.setColumnWidth(ALLOC_COL.NOTES, 150);
+  for (var c = ALLOC_COL.ITEM1; c <= ALLOC_COL.ITEM4; c++) sheet.setColumnWidth(c, 130);
+  sheet.setColumnWidth(ALLOC_COL.ALLOC_SUM, 80);
+  sheet.setColumnWidth(ALLOC_COL.ALLOC_DIFF, 80);
+  sheet.setColumnWidth(ALLOC_COL.MEMO, 150);
+
+  // データ検証: 4項目列を 0.25h刻み（≥0）に
+  var maxRows = sheet.getMaxRows() - 1;
+  BILLING_ITEMS.forEach(function(item) {
+    var letter = columnLetter_(item.col);
+    var rule = SpreadsheetApp.newDataValidation()
+      .requireFormulaSatisfied('=OR(ISBLANK(' + letter + '2),AND(' + letter + '2>=0,MOD(' + letter + '2*4,1)=0))')
+      .setHelpText('0.25h刻みで入力してください（例: 0.25, 0.5, 0.75, 1.0）')
+      .setAllowInvalid(true)
+      .build();
+    sheet.getRange(2, item.col, maxRows, 1).setDataValidation(rule);
+  });
+
+  // 条件付き書式
+  var rules = sheet.getConditionalFormatRules();
+
+  // 差異列が0以外（勤務時間入力ありかつ差異≠0）→ 赤
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($G2<>"",$Q2<>"",$Q2<>0)')
+    .setBackground('#f4cccc')
+    .setRanges([sheet.getRange(2, ALLOC_COL.ALLOC_DIFF, maxRows, 1)])
+    .build());
+
+  // Sポスト × 項目1（L列）→ 赤
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($D2="S",$L2<>"")')
+    .setBackground('#f4cccc')
+    .setRanges([sheet.getRange(2, ALLOC_COL.ITEM1, maxRows, 1)])
+    .build());
+
+  // Sポスト × 項目4（O列）→ 赤
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($D2="S",$O2<>"")')
+    .setBackground('#f4cccc')
+    .setRanges([sheet.getRange(2, ALLOC_COL.ITEM4, maxRows, 1)])
+    .build());
+
+  sheet.setConditionalFormatRules(rules);
+
+  return sheet;
+}
+
+// ── #2 から最新データを取り込む（増分のみ、タイムスタンプで重複排除） ──
+function syncAllocationSheet() {
+  var sheet = ensureAllocationSheet_();
+  var dataRows = fetchAllRows_();
+
+  // 既存タイムスタンプ集合
+  var existing = {};
+  if (sheet.getLastRow() > 1) {
+    var values = sheet.getRange(2, ALLOC_COL.TIMESTAMP, sheet.getLastRow() - 1, 1).getValues();
+    values.forEach(function(row) {
+      var ts = row[0];
+      if (ts instanceof Date) existing[ts.getTime()] = true;
+    });
+  }
+
+  // 新規行を抽出
+  var newRows = [];
+  dataRows.forEach(function(r) {
+    var ts = r[0];
+    if (!(ts instanceof Date)) return;
+    if (existing[ts.getTime()]) return;
+
+    newRows.push([
+      ts,                                             // A タイムスタンプ
+      toDateStr(r[1]),                                // B 日付
+      r[2] || '',                                     // C 氏名
+      r[3] || '',                                     // D ポスト
+      formatTimeForDisplay_(r[4]),                    // E 開始
+      formatTimeForDisplay_(r[5]),                    // F 終了
+      r[11] === '' || r[11] == null ? '' : r[11],     // G 勤務時間
+      String(r[6] || '').replace(/\n/g, ' / '),       // H イベント
+      String(r[7] || '').replace(/\n/g, ' / '),       // I 実施事項
+      String(r[8] || '').replace(/\n/g, ' / '),       // J 業務内容
+      String(r[9] || '').replace(/\n/g, ' / '),       // K 特記事項
+      '', '', '', '',                                 // L-O 4項目（空、手入力）
+      '', '',                                         // P-Q 配分計・差異（数式は後置）
+      '',                                             // R メモ
+    ]);
+  });
+
+  if (newRows.length === 0) return 0;
+
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, newRows.length, ALLOCATION_HEADERS.length).setValues(newRows);
+
+  // P列(配分計)・Q列(差異)に行ごとの数式
+  var formulasP = newRows.map(function(_, i) {
+    var r = startRow + i;
+    return ['=IF(SUM(L' + r + ':O' + r + ')=0,"",SUM(L' + r + ':O' + r + '))'];
+  });
+  var formulasQ = newRows.map(function(_, i) {
+    var r = startRow + i;
+    return ['=IF(P' + r + '="","",G' + r + '-P' + r + ')'];
+  });
+  sheet.getRange(startRow, ALLOC_COL.ALLOC_SUM, newRows.length, 1).setFormulas(formulasP);
+  sheet.getRange(startRow, ALLOC_COL.ALLOC_DIFF, newRows.length, 1).setFormulas(formulasQ);
+
+  return newRows.length;
+}
+
+// ── 時刻表示フォーマット（HH:mm） ──
+function formatTimeForDisplay_(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, 'Asia/Tokyo', 'HH:mm');
+  }
+  var s = String(val);
+  if (/^\d{1,2}:\d{2}$/.test(s)) return s;
+  var m = s.match(/(\d{1,2}:\d{2}):\d{2}/);
+  if (m) return m[1];
+  return s;
+}
+
+// ── 1-indexed の列番号 → A1記法の列文字 ──
+function columnLetter_(col) {
+  var letter = '';
+  while (col > 0) {
+    var rem = (col - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    col = Math.floor((col - 1) / 26);
+  }
+  return letter;
 }
