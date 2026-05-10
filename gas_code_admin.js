@@ -2,18 +2,19 @@
 // 管理用スプレッドシート（CCBTテクニカル業務 実績管理 2026）の Apps Script
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 機能:
-//   - メニュー「日報PDF → PDF出力」: 「設定」シート B1 の年月日でPDF生成
-//                                    （要: 「テンプレート_日報」シート）
-//   - メニュー「割り振り → 取り込み」: #2 のデータを「割り振り台帳」に増分同期
-//   - メニュー「割り振り → 自動取り込みをON/OFF」: シート起動時の自動同期
-//   - メニュー「割り振り → 月次サマリPDF出力」: 4請求項目別の月次合計をPDF化
-//                                              （要: 「テンプレート_請求サマリ」シート）
+//   - 日報PDF → 日次PDF出力             : 「設定」B1の年月日で日報PDFを生成
+//   - 日報PDF → 月次サマリPDF出力       : カテゴリ別の月次サマリPDF（日数・延べ人数）
+//   - 割り振り → #2 から最新データ取り込み : 日報→「割り振り台帳」へ増分同期
+//   - 割り振り → 月次サマリPDF出力       : 4請求項目別の月次合計PDF（請求書用）
+//   - 割り振り → 自動取り込みON/OFF     : シート起動時の自動同期
 //
 // セットアップ:
 //   1. 管理用スプレッドシートの「拡張機能 → Apps Script」にこのファイルを貼り付け
-//   2. 「テンプレート_日報」シートを作成（日次PDF用）
-//   3. 「テンプレート_請求サマリ」シートを作成（月次サマリPDF用、プレースホルダ付き）
-//   4. メニューが現れない場合はシートを再読込
+//   2. 以下のテンプレートシートを作成（プレースホルダ付き）:
+//        ・「テンプレート_日報」       … 日次PDF用
+//        ・「テンプレート_月次サマリ」 … カテゴリ別 月次サマリPDF用
+//        ・「テンプレート_請求サマリ」 … 4請求項目別 月次サマリPDF用
+//   3. メニューが現れない場合はシートを再読込
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── 設定 ──────────────────────────
@@ -21,6 +22,7 @@ const CONFIG = {
   DATA_SPREADSHEET_ID: '16I5MK1Tqv2_UXi-I8VYHSO22iAO-joNpV_PrejHntVQ',  // 閲覧用（日報データ）
   SHEET_NAME: '日報_2026',
   TEMPLATE_SHEET_NAME: 'テンプレート_日報',
+  SUMMARY_TEMPLATE_SHEET_NAME: 'テンプレート_月次サマリ',
   BILLING_SUMMARY_TEMPLATE_SHEET_NAME: 'テンプレート_請求サマリ',
   DRIVE_FOLDER_ID: '1Nx9ALl1p1Riun68L9l9OJpG19UyCDpkj',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
@@ -54,18 +56,31 @@ var ALLOCATION_HEADERS = [
   '配分計 (h)', '差異 (h)', 'メモ',
 ];
 
+// ── カテゴリ別月次サマリのカテゴリ定義 ──────────────────
+// label がフォーム送信値と一致する。データ内の未知カテゴリは「その他」に集約。
+var SUMMARY_CATEGORIES = [
+  { key: 'incubation', label: 'アートインキュベーションプログラム' },
+  { key: 'camp',       label: 'キャンプ' },
+  { key: 'showcase',   label: 'ショーケース' },
+  { key: 'workshop',   label: 'ワークショップ' },
+  { key: 'meetup',     label: 'ミートアップ' },
+  { key: 'lab',        label: 'ラボ運営および施設管理' },
+  { key: 'other',      label: 'その他' },
+];
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // メニュー: スプレッドシートを開いたときにカスタムメニューを追加
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('日報PDF')
-    .addItem('PDF出力（設定シートの年月を使用）', 'runFromSheet')
+    .addItem('日次PDF出力（設定シートの年月を使用）', 'runFromSheet')
+    .addItem('カテゴリ別 月次サマリPDF出力', 'runSummaryFromSheet')
     .addToUi();
   ui.createMenu('割り振り')
     .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
     .addSeparator()
-    .addItem('月次サマリPDF出力（設定シートの年月を使用）', 'runBillingSummaryFromSheet')
+    .addItem('請求項目別 月次サマリPDF出力', 'runBillingSummaryFromSheet')
     .addSeparator()
     .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
     .addItem('自動取り込みをOFF', 'removeAutoSyncTrigger')
@@ -102,6 +117,34 @@ function runFromSheet() {
     } else {
       ui.alert('完了: PDFを出力しました。\n' + result);
     }
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
+}
+
+// ── 月次サマリ用: 設定シートのB1から年月を取得して実行 ──
+function runSummaryFromSheet() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('設定');
+
+  if (!sheet) {
+    ui.alert('「設定」シートが見つかりません。先に「日次PDF出力」を一度実行して「設定」シートを作成してください。');
+    return;
+  }
+
+  var ym = String(sheet.getRange('B1').getValue()).trim();
+
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    ui.alert('月次サマリは YYYY-MM 形式で指定してください。\n例: 2026-04');
+    return;
+  }
+
+  ui.alert('月次サマリPDFを生成します: ' + ym);
+
+  try {
+    var url = generateMonthlySummary(ym);
+    ui.alert('完了: 月次サマリPDFを出力しました。\n' + url);
   } catch (err) {
     ui.alert('エラー: ' + err.message);
   }
@@ -511,7 +554,7 @@ function syncAllocationSheet() {
       String(r[8] || '').replace(/\n/g, ' / '),       // J 業務内容
       String(r[9] || '').replace(/\n/g, ' / '),       // K 特記事項
       '', '', '', '',                                 // L-O 4項目（空、手入力）
-      '', '',                                         // P-Q 配分計・差異（数式は後置）
+      '', '',                                         // P-Q 配分計・差異(数式は後置)
       '',                                             // R メモ
     ]);
   });
@@ -550,7 +593,7 @@ function formatTimeForDisplay_(val) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 月次サマリPDF: 割り振り台帳の L〜O 列を月で合計し、
+// 4請求項目別 月次サマリPDF: 割り振り台帳の L〜O 列を月で合計し、
 //   「テンプレート_請求サマリ」のプレースホルダを置換してPDF出力。
 //   プレースホルダ:
 //     {{year_month}}     … 例 "2026-04"
@@ -683,6 +726,146 @@ function generateBillingSummary(yearMonth) {
     var pdfBlob = fetchPdfWithRetry_(pdfUrl, fileName);
     var pdfFile = folder.createFile(pdfBlob);
     Logger.log('請求サマリPDF保存完了: ' + pdfFile.getUrl());
+    return pdfFile.getUrl();
+  } finally {
+    ss.deleteSheet(tmpSheet);
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// generateMonthlySummary: カテゴリ別 月次サマリPDFを生成
+//   集計仕様:
+//     ・日数       … その実施業務がその月に報告されたユニーク日付の数
+//     ・延べ人数   … (氏名 × 日付) のユニーク組み合わせ数
+//                    （同じ人が10日関わったら10としてカウント）
+//   ポスト区分（L/S）は区別しない。
+//   データ内のカテゴリで定義に無いものは「その他」へ集約する。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function generateMonthlySummary(yearMonth) {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('月次サマリは YYYY-MM 形式で指定してください');
+  }
+
+  var allRows = fetchAllRows_();
+  var monthRows = allRows.filter(function(row) {
+    var d = toDateStr(row[1]);
+    return d && d.substring(0, 7) === yearMonth;
+  });
+
+  if (monthRows.length === 0) {
+    throw new Error(yearMonth + ' のデータが見つかりません');
+  }
+
+  // カテゴリ別集計用バケットを初期化
+  var aggregates = {};
+  SUMMARY_CATEGORIES.forEach(function(cat) {
+    aggregates[cat.label] = { dates: {}, personDays: {} };
+  });
+
+  // 月全体の集計（カテゴリ問わず）
+  var allDates = {};
+  var allPersonDays = {};
+  var allPersons = {};
+
+  monthRows.forEach(function(row) {
+    var dateStr = toDateStr(row[1]);
+    var name = String(row[2] || '').trim();
+    if (!dateStr) return;
+
+    allDates[dateStr] = true;
+    if (name) {
+      allPersonDays[name + '|' + dateStr] = true;
+      allPersons[name] = true;
+    }
+
+    var rawCats = String(row[6] || '').trim();
+    if (!rawCats) return;
+
+    rawCats.split('\n').forEach(function(item) {
+      var cat = item.trim();
+      if (!cat) return;
+      var label = aggregates[cat] ? cat : 'その他';
+      aggregates[label].dates[dateStr] = true;
+      if (name) aggregates[label].personDays[name + '|' + dateStr] = true;
+    });
+  });
+
+  // 表示用 yearMonth（令和○年○月）
+  var ymParts = yearMonth.split('-');
+  var year = parseInt(ymParts[0], 10);
+  var month = parseInt(ymParts[1], 10);
+  var reiwa = year - 2018;
+  var yearMonthDisplay = '令和' + reiwa + '年' + month + '月';
+
+  var replacements = {
+    '{{yearMonth}}': yearMonthDisplay,
+    '{{totalDays}}': Object.keys(allDates).length,
+    '{{totalPersonDays}}': Object.keys(allPersonDays).length,
+    '{{totalPersons}}': Object.keys(allPersons).length,
+    '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
+  };
+
+  SUMMARY_CATEGORIES.forEach(function(cat) {
+    var agg = aggregates[cat.label];
+    replacements['{{days_' + cat.key + '}}'] = Object.keys(agg.dates).length;
+    replacements['{{persons_' + cat.key + '}}'] = Object.keys(agg.personDays).length;
+  });
+
+  // テンプレートをコピーして置換 → PDFエクスポート
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var templateSheet = ss.getSheetByName(CONFIG.SUMMARY_TEMPLATE_SHEET_NAME);
+  if (!templateSheet) {
+    throw new Error('「' + CONFIG.SUMMARY_TEMPLATE_SHEET_NAME + '」シートが見つかりません');
+  }
+
+  var tmpName = '_tmp_月次サマリ_' + yearMonth;
+  var tmpSheet = templateSheet.copyTo(ss).setName(tmpName);
+
+  var range = tmpSheet.getDataRange();
+  var values = range.getValues();
+  for (var i = 0; i < values.length; i++) {
+    for (var j = 0; j < values[i].length; j++) {
+      var cell = values[i][j];
+      if (typeof cell === 'string' && cell.indexOf('{{') !== -1) {
+        var newVal = cell;
+        for (var key in replacements) {
+          newVal = newVal.split(key).join(String(replacements[key]));
+        }
+        if (newVal !== cell) {
+          tmpSheet.getRange(i + 1, j + 1).setValue(newVal);
+        }
+      }
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  var folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  var fileName = '業務日報_月次サマリ_' + yearMonth;
+
+  var existing = folder.getFilesByName(fileName + '.pdf');
+  while (existing.hasNext()) {
+    existing.next().setTrashed(true);
+  }
+
+  var ssId = ss.getId();
+  var sheetId = tmpSheet.getSheetId();
+  var pdfUrl = 'https://docs.google.com/spreadsheets/d/' + ssId + '/export?'
+    + 'format=pdf'
+    + '&gid=' + sheetId
+    + '&size=A4'
+    + '&portrait=true'
+    + '&fitw=true'
+    + '&gridlines=false'
+    + '&printtitle=false'
+    + '&sheetnames=false'
+    + '&pagenum=UNDEFINED'
+    + '&fzr=false';
+
+  try {
+    var pdfBlob = fetchPdfWithRetry_(pdfUrl, fileName);
+    var pdfFile = folder.createFile(pdfBlob);
+    Logger.log('月次サマリPDF保存完了: ' + pdfFile.getUrl());
     return pdfFile.getUrl();
   } finally {
     ss.deleteSheet(tmpSheet);
