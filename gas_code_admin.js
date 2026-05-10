@@ -27,6 +27,7 @@ const CONFIG = {
   DRIVE_FOLDER_ID: '1Nx9ALl1p1Riun68L9l9OJpG19UyCDpkj',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
   ALLOCATION_SHEET_NAME: '割り振り台帳',
+  ALLOCATION_SUMMARY_SHEET_NAME: '割り振り集計',
 };
 
 // ── 4請求項目の定義（割り振り台帳用） ──────────────────
@@ -80,6 +81,7 @@ function onOpen() {
   ui.createMenu('割り振り')
     .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
     .addSeparator()
+    .addItem('集計シートを作成/更新', 'runUpsertAllocationSummary')
     .addItem('請求項目別 月次サマリPDF出力', 'runBillingSummaryFromSheet')
     .addSeparator()
     .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
@@ -590,6 +592,73 @@ function formatTimeForDisplay_(val) {
   var m = s.match(/(\d{1,2}:\d{2}):\d{2}/);
   if (m) return m[1];
   return s;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 割り振り集計シート: 月×4請求項目の合計をQUERYで動的に表示。
+//   割り振り台帳を編集すると即反映される（数式のみ、スナップショットではない）。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function runUpsertAllocationSummary() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    ensureAllocationSummarySheet_();
+    ui.alert('「' + CONFIG.ALLOCATION_SUMMARY_SHEET_NAME + '」シートを作成/更新しました。');
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
+}
+
+function ensureAllocationSummarySheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allocName = CONFIG.ALLOCATION_SHEET_NAME;
+  if (!ss.getSheetByName(allocName)) {
+    throw new Error('「' + allocName + '」シートが見つかりません。先に取り込みを実行してください。');
+  }
+
+  var name = CONFIG.ALLOCATION_SUMMARY_SHEET_NAME;
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+  sheet.clear();
+
+  // 配列リテラルで [yyyy-mm, L, M, N, O, 合計] の6列を組み立て、QUERYで月ごとに合計。
+  // 各数値列に N() を通すのは、L〜O に空文字列（手入力前の初期値）が混ざると
+  // QUERY が文字列列と判定して AVG_SUM_ONLY_NUMERIC エラーを出すため。
+  var qb = "'" + allocName + "'!B2:B";
+  var ql = "'" + allocName + "'!L2:L";
+  var qm = "'" + allocName + "'!M2:M";
+  var qn = "'" + allocName + "'!N2:N";
+  var qo = "'" + allocName + "'!O2:O";
+
+  var formula =
+    '=QUERY({' +
+      'ARRAYFORMULA(IF(' + qb + '="","",TEXT(' + qb + ',"yyyy-mm"))),' +
+      'ARRAYFORMULA(N(' + ql + ')),' +
+      'ARRAYFORMULA(N(' + qm + ')),' +
+      'ARRAYFORMULA(N(' + qn + ')),' +
+      'ARRAYFORMULA(N(' + qo + ')),' +
+      'ARRAYFORMULA(N(' + ql + ')+N(' + qm + ')+N(' + qn + ')+N(' + qo + '))' +
+    '},' +
+    '"SELECT Col1, SUM(Col2), SUM(Col3), SUM(Col4), SUM(Col5), SUM(Col6) ' +
+    'WHERE Col1 <> \'\' ' +
+    'GROUP BY Col1 ORDER BY Col1 ' +
+    'LABEL Col1 \'月\', SUM(Col2) \'①実施計画 (h)\', SUM(Col3) \'②機器運用 (h)\', SUM(Col4) \'③設営・技術支援 (h)\', SUM(Col5) \'④事業マネジメント (h)\', SUM(Col6) \'合計 (h)\'",' +
+    '0)';
+
+  sheet.getRange('A1').setFormula(formula);
+  sheet.setFrozenRows(1);
+
+  sheet.setColumnWidth(1, 100);
+  for (var c = 2; c <= 5; c++) sheet.setColumnWidth(c, 140);
+  sheet.setColumnWidth(6, 110);
+
+  var maxRows = sheet.getMaxRows();
+  sheet.getRange(2, 2, maxRows - 1, 5).setNumberFormat('0.00');
+  sheet.getRange(1, 1, 1, 6)
+    .setFontWeight('bold')
+    .setBackground('#e8eaed')
+    .setHorizontalAlignment('center');
+
+  return sheet;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
