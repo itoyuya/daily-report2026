@@ -6,11 +6,14 @@
 //                                    （要: 「テンプレート_日報」シート）
 //   - メニュー「割り振り → 取り込み」: #2 のデータを「割り振り台帳」に増分同期
 //   - メニュー「割り振り → 自動取り込みをON/OFF」: シート起動時の自動同期
+//   - メニュー「割り振り → 月次サマリPDF出力」: 4請求項目別の月次合計をPDF化
+//                                              （要: 「テンプレート_請求サマリ」シート）
 //
 // セットアップ:
 //   1. 管理用スプレッドシートの「拡張機能 → Apps Script」にこのファイルを貼り付け
-//   2. 「テンプレート_日報」シートを作成（PDF出力用）
-//   3. メニューが現れない場合はシートを再読込
+//   2. 「テンプレート_日報」シートを作成（日次PDF用）
+//   3. 「テンプレート_請求サマリ」シートを作成（月次サマリPDF用、プレースホルダ付き）
+//   4. メニューが現れない場合はシートを再読込
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── 設定 ──────────────────────────
@@ -18,6 +21,7 @@ const CONFIG = {
   DATA_SPREADSHEET_ID: '16I5MK1Tqv2_UXi-I8VYHSO22iAO-joNpV_PrejHntVQ',  // 閲覧用（日報データ）
   SHEET_NAME: '日報_2026',
   TEMPLATE_SHEET_NAME: 'テンプレート_日報',
+  BILLING_SUMMARY_TEMPLATE_SHEET_NAME: 'テンプレート_請求サマリ',
   DRIVE_FOLDER_ID: '1Nx9ALl1p1Riun68L9l9OJpG19UyCDpkj',
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
   ALLOCATION_SHEET_NAME: '割り振り台帳',
@@ -60,6 +64,8 @@ function onOpen() {
     .addToUi();
   ui.createMenu('割り振り')
     .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
+    .addSeparator()
+    .addItem('月次サマリPDF出力（設定シートの年月を使用）', 'runBillingSummaryFromSheet')
     .addSeparator()
     .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
     .addItem('自動取り込みをOFF', 'removeAutoSyncTrigger')
@@ -541,6 +547,146 @@ function formatTimeForDisplay_(val) {
   var m = s.match(/(\d{1,2}:\d{2}):\d{2}/);
   if (m) return m[1];
   return s;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 月次サマリPDF: 割り振り台帳の L〜O 列を月で合計し、
+//   「テンプレート_請求サマリ」のプレースホルダを置換してPDF出力。
+//   プレースホルダ:
+//     {{year_month}}     … 例 "2026-04"
+//     {{item1_total}} 〜 {{item4_total}}  … 各項目の月合計（h、小数2桁）
+//     {{grand_total}}    … 4項目の総合計（h、小数2桁）
+//     {{responsible}}    … 担当者名
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function runBillingSummaryFromSheet() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('設定');
+
+  if (!sheet) {
+    ui.alert('「設定」シートが見つかりません。先に「日報PDF → PDF出力」を一度実行して「設定」シートを作成してください。');
+    return;
+  }
+
+  var ym = String(sheet.getRange('B1').getValue()).trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    ui.alert('月次サマリは YYYY-MM 形式で指定してください（例: 2026-04）。');
+    return;
+  }
+
+  ui.alert('請求項目別 月次サマリPDFを生成します: ' + ym);
+
+  try {
+    var url = generateBillingSummary(ym);
+    ui.alert('完了: PDFを出力しました。\n' + url);
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
+}
+
+function generateBillingSummary(yearMonth) {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('月次サマリは YYYY-MM 形式で指定してください');
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allocSheet = ss.getSheetByName(CONFIG.ALLOCATION_SHEET_NAME);
+  if (!allocSheet) {
+    throw new Error('「' + CONFIG.ALLOCATION_SHEET_NAME + '」シートが見つかりません。先に取り込みを実行してください。');
+  }
+
+  var lastRow = allocSheet.getLastRow();
+  if (lastRow < 2) {
+    throw new Error('割り振り台帳にデータがありません');
+  }
+
+  // B:日付, L〜O:4項目時間 をまとめて取得
+  var dateCol = ALLOC_COL.DATE;       // 2
+  var startCol = ALLOC_COL.ITEM1;     // 12
+  var width = ALLOC_COL.ITEM4 - ALLOC_COL.ITEM1 + 1;  // 4
+  var dates = allocSheet.getRange(2, dateCol, lastRow - 1, 1).getValues();
+  var items = allocSheet.getRange(2, startCol, lastRow - 1, width).getValues();
+
+  var totals = [0, 0, 0, 0];
+  var matched = 0;
+  for (var i = 0; i < dates.length; i++) {
+    var d = toDateStr(dates[i][0]);
+    if (!d || d.substring(0, 7) !== yearMonth) continue;
+    matched++;
+    for (var j = 0; j < width; j++) {
+      var v = items[i][j];
+      if (typeof v === 'number') totals[j] += v;
+    }
+  }
+
+  if (matched === 0) {
+    throw new Error(yearMonth + ' の割り振りデータが見つかりません');
+  }
+
+  var grand = totals[0] + totals[1] + totals[2] + totals[3];
+  var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };
+
+  var replacements = {
+    '{{year_month}}': yearMonth,
+    '{{item1_total}}': fmt(totals[0]),
+    '{{item2_total}}': fmt(totals[1]),
+    '{{item3_total}}': fmt(totals[2]),
+    '{{item4_total}}': fmt(totals[3]),
+    '{{grand_total}}': fmt(grand),
+    '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
+  };
+
+  var templateSheet = ss.getSheetByName(CONFIG.BILLING_SUMMARY_TEMPLATE_SHEET_NAME);
+  if (!templateSheet) {
+    throw new Error('「' + CONFIG.BILLING_SUMMARY_TEMPLATE_SHEET_NAME + '」シートが見つかりません');
+  }
+
+  var tmpName = '_tmp_請求サマリ_' + yearMonth;
+  var tmpSheet = templateSheet.copyTo(ss).setName(tmpName);
+
+  var range = tmpSheet.getDataRange();
+  var values = range.getValues();
+  for (var r = 0; r < values.length; r++) {
+    for (var c = 0; c < values[r].length; c++) {
+      var cell = values[r][c];
+      if (typeof cell !== 'string' || cell.indexOf('{{') === -1) continue;
+      var newVal = cell;
+      for (var key in replacements) {
+        newVal = newVal.split(key).join(replacements[key]);
+      }
+      if (newVal !== cell) tmpSheet.getRange(r + 1, c + 1).setValue(newVal);
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  var folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  var fileName = '請求サマリ_' + yearMonth;
+
+  var existing = folder.getFilesByName(fileName + '.pdf');
+  while (existing.hasNext()) existing.next().setTrashed(true);
+
+  var pdfUrl = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?'
+    + 'format=pdf'
+    + '&gid=' + tmpSheet.getSheetId()
+    + '&size=A4'
+    + '&portrait=true'
+    + '&fitw=true'
+    + '&gridlines=false'
+    + '&printtitle=false'
+    + '&sheetnames=false'
+    + '&pagenum=UNDEFINED'
+    + '&fzr=false';
+
+  try {
+    var pdfBlob = fetchPdfWithRetry_(pdfUrl, fileName);
+    var pdfFile = folder.createFile(pdfBlob);
+    Logger.log('請求サマリPDF保存完了: ' + pdfFile.getUrl());
+    return pdfFile.getUrl();
+  } finally {
+    ss.deleteSheet(tmpSheet);
+  }
 }
 
 // ── 1-indexed の列番号 → A1記法の列文字 ──
