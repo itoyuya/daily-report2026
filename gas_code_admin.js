@@ -852,11 +852,13 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
     ['S', ov.hoursS, ov.carryInS, ov.availS, ov.deemedPostsS, ov.carryOutS, S, ov.deemedPostsS * S],
   ];
   sheet.getRange(6, 1, lsRows.length, lsHeaders.length).setValues(lsRows);
-  // 数値書式
-  sheet.getRange(6, 2, 2, 3).setNumberFormat('0.00');  // 当月実働H / 前月繰越H / 使用可能H
-  sheet.getRange(6, 5, 2, 1).setNumberFormat('0');     // みなしP 整数
-  sheet.getRange(6, 6, 2, 1).setNumberFormat('0.00');  // 翌月繰越H
-  sheet.getRange(6, 7, 2, 2).setNumberFormat('#,##0'); // 単価・金額
+  // 数値書式（0は "-" 表示、正値は小数1〜4桁 + 単位）
+  var FMT_HOURS = '[>0]0.0###"H";"-"';
+  var FMT_POSTS = '[>0]0.0###"P";"-"';
+  sheet.getRange(6, 2, 2, 3).setNumberFormat(FMT_HOURS); // 当月実働H / 前月繰越H / 使用可能H
+  sheet.getRange(6, 5, 2, 1).setNumberFormat(FMT_POSTS); // みなしP
+  sheet.getRange(6, 6, 2, 1).setNumberFormat(FMT_HOURS); // 翌月繰越H
+  sheet.getRange(6, 7, 2, 2).setNumberFormat('#,##0');   // 単価・金額
 
   // 税抜/消費税/税込
   sheet.getRange(9, 7).setValue('税抜小計').setFontWeight('bold').setHorizontalAlignment('right');
@@ -882,12 +884,12 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
     return [itemLabels[i], it.hoursL, it.postsL, it.hoursS, it.postsS, it.amount, it.days, it.personDays];
   });
   sheet.getRange(17, 1, itemRows.length, itemHeaders.length).setValues(itemRows);
-  sheet.getRange(17, 2, itemRows.length, 1).setNumberFormat('0.00');    // L時間
-  sheet.getRange(17, 3, itemRows.length, 1).setNumberFormat('0.0000');  // L按分P（小数4桁）
-  sheet.getRange(17, 4, itemRows.length, 1).setNumberFormat('0.00');    // S時間
-  sheet.getRange(17, 5, itemRows.length, 1).setNumberFormat('0.0000');  // S按分P（小数4桁）
-  sheet.getRange(17, 6, itemRows.length, 1).setNumberFormat('#,##0');   // 金額
-  sheet.getRange(17, 7, itemRows.length, 2).setNumberFormat('0');       // 延べ日数・人数
+  sheet.getRange(17, 2, itemRows.length, 1).setNumberFormat(FMT_HOURS);  // L時間
+  sheet.getRange(17, 3, itemRows.length, 1).setNumberFormat(FMT_POSTS);  // L按分P
+  sheet.getRange(17, 4, itemRows.length, 1).setNumberFormat(FMT_HOURS);  // S時間
+  sheet.getRange(17, 5, itemRows.length, 1).setNumberFormat(FMT_POSTS);  // S按分P
+  sheet.getRange(17, 6, itemRows.length, 1).setNumberFormat('#,##0');    // 金額
+  sheet.getRange(17, 7, itemRows.length, 2).setNumberFormat('0');        // 延べ日数・人数
 
   // 更新日時
   var noteRow = 17 + itemRows.length + 2;
