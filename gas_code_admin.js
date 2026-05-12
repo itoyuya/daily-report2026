@@ -2,12 +2,12 @@
 // 管理用スプレッドシート（CCBTテクニカル業務 実績管理 2026）の Apps Script
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 機能:
-//   - 日報PDF → 日次PDF出力             : 「設定」B1の年月日で日報PDFを生成
-//   - 日報PDF → 月次サマリPDF出力       : カテゴリ別の月次サマリPDF（日数・延べ人数）
-//   - 割り振り → #2 から最新データ取り込み : 日報→「割り振り台帳」へ増分同期
-//   - 割り振り → 月次サマリPDF出力       : 4請求項目別の月次サマリPDF（クライアント送付用）
-//   - 割り振り → 請求集計シートを更新   : 社内確認用シート（L/S別ポスト数・時間・金額の詳細）
-//   - 割り振り → 自動取り込みON/OFF     : シート起動時の自動同期
+//   - 日報PDF → 日次PDF出力                              : 設定_日報の値で日報PDFを生成
+//   - 割り振り → 業務完了報告より最新データを読み込み    : 日報→「割り振り台帳」へ増分同期
+//   - 割り振り → 請求集計シートを更新                    : 社内確認用シート（L/S別ポスト数・時間・金額の詳細）
+//   - 割り振り → 請求項目別 月次サマリPDF出力            : クライアント送付用 月次サマリPDF
+//   - 割り振り → 自動取り込みON/OFF                      : シート起動時の自動同期
+//   - 設定 → 設定シートを準備/再構築                      : 設定_日報 + 設定_請求集計 を作成/再構築
 //
 // セットアップ:
 //   1. 管理用スプレッドシートの「拡張機能 → Apps Script」にこのファイルを貼り付け
@@ -83,13 +83,11 @@ var SUMMARY_CATEGORIES = [
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('日報PDF')
-    .addItem('日次PDF出力（設定シートの年月を使用）', 'runFromSheet')
-    .addItem('カテゴリ別 月次サマリPDF出力', 'runSummaryFromSheet')
+    .addItem('日次PDF出力（設定_日報の値を使用）', 'runFromSheet')
     .addToUi();
   ui.createMenu('割り振り')
-    .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
+    .addItem('業務完了報告より最新データを読み込み', 'runSyncAllocation')
     .addSeparator()
-    .addItem('集計シートを作成/更新', 'runUpsertAllocationSummary')
     .addItem('請求集計シートを更新（社内確認用）', 'runUpsertBillingDetail')
     .addItem('請求項目別 月次サマリPDF出力（クライアント送付用）', 'runBillingSummaryFromSheet')
     .addSeparator()
