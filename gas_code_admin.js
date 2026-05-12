@@ -30,6 +30,8 @@ const CONFIG = {
   ALLOCATION_SHEET_NAME: '割り振り台帳',
   ALLOCATION_SUMMARY_SHEET_NAME: '割り振り集計',
   BILLING_DETAIL_SHEET_NAME: '請求集計',
+  SETTINGS_DAILY_SHEET_NAME: '設定_日報',
+  SETTINGS_BILLING_SHEET_NAME: '設定_請求集計',
   // 請求単価（クライアント請求用 / 年間支払計画書ベース、社内ロジック）
   LEADER_DAILY_RATE: 36000,     // L: テクニカルディレクターおよびリーダー（円/日=ポスト）
   SUPPORTER_DAILY_RATE: 29400,  // S: テクニカルサポーター（円/日=ポスト）
@@ -94,26 +96,18 @@ function onOpen() {
     .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
     .addItem('自動取り込みをOFF', 'removeAutoSyncTrigger')
     .addToUi();
+  ui.createMenu('設定')
+    .addItem('設定シートを準備/再構築（設定_日報 + 設定_請求集計）', 'runRebuildSettingsSheets')
+    .addToUi();
 }
 
 function runFromSheet() {
   var ui = SpreadsheetApp.getUi();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('設定');
-
-  if (!sheet) {
-    sheet = ss.insertSheet('設定');
-    sheet.getRange('A1').setValue('出力対象');
-    sheet.getRange('B1').setValue('2026-04');
-    sheet.getRange('A3').setValue('↑ B1セルにYYYY-MM または YYYY-MM-DD を入力し、メニュー「日報PDF → PDF出力」を実行');
-    ui.alert('「設定」シートを作成しました。\nB1セルに年月（例: 2026-04）を入力してから再度実行してください。');
-    return;
-  }
-
-  var dateStr = String(sheet.getRange('B1').getValue()).trim();
+  ensureDailySettingsSheet_();
+  var dateStr = readDayOrMonthFromDailySettings_();
 
   if (!dateStr || (!/^\d{4}-\d{2}$/.test(dateStr) && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr))) {
-    ui.alert('「設定」シートのB1セルに YYYY-MM または YYYY-MM-DD の形式で入力してください。\n例: 2026-04');
+    ui.alert('「設定_日報」シートの B3 に YYYY-MM または YYYY-MM-DD を入力してください（例: 2026-04 または 2026-04-15）。');
     return;
   }
 
@@ -131,21 +125,14 @@ function runFromSheet() {
   }
 }
 
-// ── 月次サマリ用: 設定シートのB1から年月を取得して実行 ──
+// ── 月次サマリ用: 設定_日報 の B3 から対象月を取得して実行（YYYY-MM のときのみ有効） ──
 function runSummaryFromSheet() {
   var ui = SpreadsheetApp.getUi();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('設定');
-
-  if (!sheet) {
-    ui.alert('「設定」シートが見つかりません。先に「日次PDF出力」を一度実行して「設定」シートを作成してください。');
-    return;
-  }
-
-  var ym = String(sheet.getRange('B1').getValue()).trim();
+  ensureDailySettingsSheet_();
+  var ym = readDayOrMonthFromDailySettings_();
 
   if (!/^\d{4}-\d{2}$/.test(ym)) {
-    ui.alert('月次サマリは YYYY-MM 形式で指定してください。\n例: 2026-04');
+    ui.alert('「設定_日報」シートの B3 に対象月を YYYY-MM 形式で入力してください（例: 2026-04）。\n月次サマリは日指定では出力できません。');
     return;
   }
 
@@ -160,26 +147,143 @@ function runSummaryFromSheet() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 設定シートの繰越セル(B2=L繰越H, B3=S繰越H)を読む。
-//   ラベルが未設定なら A2/A3 にラベルを書き込んで返す。値が無ければ 0。
+// 設定シート（用途別に2枚に分離）
+//
+//   「設定_日報」     B3: 対象日(YYYY-MM-DD) or 対象月(YYYY-MM)
+//                     → 日次PDF / カテゴリ別月次サマリPDF が使用
+//
+//   「設定_請求集計」 B3: 対象月(YYYY-MM)
+//                     B5: L 前月繰越H
+//                     B6: S 前月繰越H
+//                     → 請求集計シート / 請求サマリPDF が使用
+//
+//   旧「設定」シートが残っている場合、初回アクセス時に値をベストエフォートで
+//   新シートへ移植する（旧シートは消さない、ユーザーが手動で削除）
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function readCarryFromSettings_() {
+
+function ensureDailySettingsSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('設定');
-  if (!sheet) return { L: 0, S: 0 };
+  var name = CONFIG.SETTINGS_DAILY_SHEET_NAME;
+  var sheet = ss.getSheetByName(name);
+  if (sheet) return sheet;
 
-  // ラベル未設定なら自動で書く（既存値は壊さない）
-  if (!sheet.getRange('A2').getValue()) sheet.getRange('A2').setValue('L繰越H(前月)');
-  if (!sheet.getRange('A3').getValue()) sheet.getRange('A3').setValue('S繰越H(前月)');
+  // 旧シートから値を拾う（あれば）
+  var seed = pickDayOrMonthFromLegacy_(ss);
 
-  var bL = sheet.getRange('B2').getValue();
-  var bS = sheet.getRange('B3').getValue();
+  sheet = ss.insertSheet(name);
+  sheet.setColumnWidth(1, 320);
+  sheet.setColumnWidth(2, 200);
+  sheet.getRange('A1').setValue('設定_日報')
+    .setFontWeight('bold').setFontSize(14).setBackground('#fff4d6');
+  sheet.getRange('A2').setValue('↑ 日次PDF / カテゴリ別月次サマリPDF で使用')
+    .setFontColor('#666666').setFontStyle('italic');
+  sheet.getRange('A3').setValue('対象（YYYY-MM-DD or YYYY-MM）');
+  sheet.getRange('B3').setBackground('#fff9e6').setNumberFormat('@')
+    .setNote('YYYY-MM-DD で特定日の日報、YYYY-MM でその月の日報まとめ または 月次サマリ');
+  if (seed) sheet.getRange('B3').setValue(seed);
+  return sheet;
+}
+
+function ensureBillingSettingsSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = CONFIG.SETTINGS_BILLING_SHEET_NAME;
+  var sheet = ss.getSheetByName(name);
+  if (sheet) return sheet;
+
+  // 旧シートから値を拾う（あれば）
+  var seed = pickBillingFromLegacy_(ss);
+
+  sheet = ss.insertSheet(name);
+  sheet.setColumnWidth(1, 320);
+  sheet.setColumnWidth(2, 200);
+  sheet.getRange('A1').setValue('設定_請求集計')
+    .setFontWeight('bold').setFontSize(14).setBackground('#fff4d6');
+  sheet.getRange('A2').setValue('↑ 請求集計シート更新 / 請求サマリPDF で使用')
+    .setFontColor('#666666').setFontStyle('italic');
+  sheet.getRange('A3').setValue('対象月（YYYY-MM）');
+  sheet.getRange('B3').setBackground('#fff9e6').setNumberFormat('@')
+    .setNote('YYYY-MM 形式で入力（例: 2026-04）');
+  sheet.getRange('A5').setValue('L 前月繰越H');
+  sheet.getRange('A6').setValue('S 前月繰越H');
+  sheet.getRange('B5:B6').setBackground('#fff9e6').setNumberFormat('0.00');
+  sheet.getRange('B5').setNote('前月から繰り越したL区分の時間。4月のみ前年度シートから、5月以降は前月「請求集計」の翌月繰越Hを転記');
+  sheet.getRange('B6').setNote('前月から繰り越したS区分の時間。4月のみ前年度シートから、5月以降は前月「請求集計」の翌月繰越Hを転記');
+
+  if (seed) {
+    if (seed.month) sheet.getRange('B3').setValue(seed.month);
+    if (typeof seed.L === 'number') sheet.getRange('B5').setValue(seed.L);
+    if (typeof seed.S === 'number') sheet.getRange('B6').setValue(seed.S);
+  }
+  return sheet;
+}
+
+// 旧「設定」シートから日次PDF用の値を拾う（移植用）
+function pickDayOrMonthFromLegacy_(ss) {
+  var old = ss.getSheetByName('設定');
+  if (!old) return '';
+  // 新統合形式(B8) → 旧オリジナル形式(B1) の順で探す
+  var b8 = String(old.getRange('B8').getValue() || '').trim();
+  if (/^\d{4}-\d{2}(-\d{2})?$/.test(b8)) return b8;
+  var b1 = String(old.getRange('B1').getValue() || '').trim();
+  if (/^\d{4}-\d{2}(-\d{2})?$/.test(b1)) return b1;
+  return '';
+}
+
+// 旧「設定」シートから請求用の値を拾う（移植用）
+function pickBillingFromLegacy_(ss) {
+  var old = ss.getSheetByName('設定');
+  if (!old) return null;
+  var result = {};
+  // 月: 新統合形式 B4 → 旧 B1 (YYYY-MM のときのみ)
+  var b4 = String(old.getRange('B4').getValue() || '').trim();
+  if (/^\d{4}-\d{2}$/.test(b4)) {
+    result.month = b4;
+  } else {
+    var b1 = String(old.getRange('B1').getValue() || '').trim();
+    if (/^\d{4}-\d{2}$/.test(b1)) result.month = b1;
+  }
+  // 繰越: 新統合形式 B12/B13 → 旧 B2/B3
+  var l = old.getRange('B12').getValue();
+  if (!(typeof l === 'number')) l = old.getRange('B2').getValue();
+  var s = old.getRange('B13').getValue();
+  if (!(typeof s === 'number')) s = old.getRange('B3').getValue();
+  if (typeof l === 'number' && l >= 0) result.L = l;
+  if (typeof s === 'number' && s >= 0) result.S = s;
+  return result;
+}
+
+function readDayOrMonthFromDailySettings_() {
+  var sheet = ensureDailySettingsSheet_();
+  return String(sheet.getRange('B3').getValue() || '').trim();
+}
+
+function readMonthFromBillingSettings_() {
+  var sheet = ensureBillingSettingsSheet_();
+  return String(sheet.getRange('B3').getValue() || '').trim();
+}
+
+function readCarryFromBillingSettings_() {
+  var sheet = ensureBillingSettingsSheet_();
+  var bL = sheet.getRange('B5').getValue();
+  var bS = sheet.getRange('B6').getValue();
   var nL = typeof bL === 'number' ? bL : parseFloat(bL);
   var nS = typeof bS === 'number' ? bS : parseFloat(bS);
   return {
     L: (isFinite(nL) && nL >= 0) ? nL : 0,
     S: (isFinite(nS) && nS >= 0) ? nS : 0,
   };
+}
+
+function runRebuildSettingsSheets() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    ensureDailySettingsSheet_();
+    ensureBillingSettingsSheet_();
+    ui.alert('「設定_日報」「設定_請求集計」シートを準備しました。'
+      + '\n旧「設定」シートが残っている場合は手動で削除してください。');
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
 }
 
 // ── 日付をYYYY-MM-DD文字列に変換 ──────────────────
@@ -698,18 +802,13 @@ function ensureAllocationSummarySheet_() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function runUpsertBillingDetail() {
   var ui = SpreadsheetApp.getUi();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('設定');
-  if (!sheet) {
-    ui.alert('「設定」シートが見つかりません。先に「日報PDF → PDF出力」を一度実行して「設定」シートを作成してください。');
-    return;
-  }
-  var ym = String(sheet.getRange('B1').getValue()).trim();
+  ensureBillingSettingsSheet_();
+  var ym = readMonthFromBillingSettings_();
   if (!/^\d{4}-\d{2}$/.test(ym)) {
-    ui.alert('請求集計は YYYY-MM 形式で指定してください（例: 2026-04）。');
+    ui.alert('「設定_請求集計」シートの B3 に対象月を YYYY-MM 形式で入力してください（例: 2026-04）。');
     return;
   }
-  var carry = readCarryFromSettings_();
+  var carry = readCarryFromBillingSettings_();
   try {
     upsertBillingDetailSheet(ym, carry.L, carry.S);
     ui.alert('「' + CONFIG.BILLING_DETAIL_SHEET_NAME + '」シートを更新しました: ' + ym
@@ -756,8 +855,9 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
   ];
   sheet.getRange(6, 1, lsRows.length, lsHeaders.length).setValues(lsRows);
   // 数値書式
-  sheet.getRange(6, 2, 2, 4).setNumberFormat('0.00');  // 時間系（4列: B〜E）
+  sheet.getRange(6, 2, 2, 3).setNumberFormat('0.00');  // 当月実働H / 前月繰越H / 使用可能H
   sheet.getRange(6, 5, 2, 1).setNumberFormat('0');     // みなしP 整数
+  sheet.getRange(6, 6, 2, 1).setNumberFormat('0.00');  // 翌月繰越H
   sheet.getRange(6, 7, 2, 2).setNumberFormat('#,##0'); // 単価・金額
 
   // 税抜/消費税/税込
@@ -784,12 +884,12 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
     return [itemLabels[i], it.hoursL, it.postsL, it.hoursS, it.postsS, it.amount, it.days, it.personDays];
   });
   sheet.getRange(17, 1, itemRows.length, itemHeaders.length).setValues(itemRows);
-  sheet.getRange(17, 2, itemRows.length, 1).setNumberFormat('0.00');  // L時間
-  sheet.getRange(17, 3, itemRows.length, 1).setNumberFormat('0.00');  // L按分P
-  sheet.getRange(17, 4, itemRows.length, 1).setNumberFormat('0.00');  // S時間
-  sheet.getRange(17, 5, itemRows.length, 1).setNumberFormat('0.00');  // S按分P
-  sheet.getRange(17, 6, itemRows.length, 1).setNumberFormat('#,##0'); // 金額
-  sheet.getRange(17, 7, itemRows.length, 2).setNumberFormat('0');     // 延べ日数・人数
+  sheet.getRange(17, 2, itemRows.length, 1).setNumberFormat('0.00');    // L時間
+  sheet.getRange(17, 3, itemRows.length, 1).setNumberFormat('0.0000');  // L按分P（小数4桁）
+  sheet.getRange(17, 4, itemRows.length, 1).setNumberFormat('0.00');    // S時間
+  sheet.getRange(17, 5, itemRows.length, 1).setNumberFormat('0.0000');  // S按分P（小数4桁）
+  sheet.getRange(17, 6, itemRows.length, 1).setNumberFormat('#,##0');   // 金額
+  sheet.getRange(17, 7, itemRows.length, 2).setNumberFormat('0');       // 延べ日数・人数
 
   // 更新日時
   var noteRow = 17 + itemRows.length + 2;
@@ -804,7 +904,7 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
   sheet.setColumnWidth(8, 130);
 
   sheet.setFrozenRows(5);
-  return sheet;
+  return data;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -981,27 +1081,20 @@ function aggregateBillingData_(yearMonth, carryInL, carryInS) {
 
 function runBillingSummaryFromSheet() {
   var ui = SpreadsheetApp.getUi();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('設定');
-
-  if (!sheet) {
-    ui.alert('「設定」シートが見つかりません。先に「日報PDF → PDF出力」を一度実行して「設定」シートを作成してください。');
-    return;
-  }
-
-  var ym = String(sheet.getRange('B1').getValue()).trim();
+  ensureBillingSettingsSheet_();
+  var ym = readMonthFromBillingSettings_();
   if (!/^\d{4}-\d{2}$/.test(ym)) {
-    ui.alert('月次サマリは YYYY-MM 形式で指定してください（例: 2026-04）。');
+    ui.alert('「設定_請求集計」シートの B3 に対象月を YYYY-MM 形式で入力してください（例: 2026-04）。');
     return;
   }
 
-  var carry = readCarryFromSettings_();
+  var carry = readCarryFromBillingSettings_();
   ui.alert('請求項目別 月次サマリPDFを生成します: ' + ym
     + '\n（前月繰越: L=' + carry.L + 'H, S=' + carry.S + 'H）');
 
   try {
-    var url = generateBillingSummary(ym, carry.L, carry.S);
-    ui.alert('完了: PDFを出力しました。\n' + url);
+    var result = generateBillingSummary(ym, carry.L, carry.S);
+    ui.alert('完了: PDFを出力しました。\n' + result.url);
   } catch (err) {
     ui.alert('エラー: ' + err.message);
   }
@@ -1015,7 +1108,8 @@ function generateBillingSummary(yearMonth, carryInL, carryInS) {
     throw new Error('「' + CONFIG.BILLING_SUMMARY_TEMPLATE_SHEET_NAME + '」シートが見つかりません');
   }
 
-  var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };
+  var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };           // 時間: 小数2桁
+  var fmtPosts = function(n) { return Number(n).toFixed(4); };                          // ポスト: 小数4桁
   var fmtAmount = function(n) { return String(Math.round(n)); };
   var its = data.items;
   var ov = data.overall;
@@ -1060,19 +1154,19 @@ function generateBillingSummary(yearMonth, carryInL, carryInS) {
     '{{item3_persons}}': String(its[2].personDays),
     '{{item4_persons}}': String(its[3].personDays),
     '{{total_persons}}': String(ov.personDays),
-    // 項目別 L/S 按分P
-    '{{item1_posts_l}}': fmt(its[0].postsL),
-    '{{item2_posts_l}}': fmt(its[1].postsL),
-    '{{item3_posts_l}}': fmt(its[2].postsL),
-    '{{item4_posts_l}}': fmt(its[3].postsL),
-    '{{item1_posts_s}}': fmt(its[0].postsS),
-    '{{item2_posts_s}}': fmt(its[1].postsS),
-    '{{item3_posts_s}}': fmt(its[2].postsS),
-    '{{item4_posts_s}}': fmt(its[3].postsS),
-    '{{item1_posts}}': fmt(its[0].posts),
-    '{{item2_posts}}': fmt(its[1].posts),
-    '{{item3_posts}}': fmt(its[2].posts),
-    '{{item4_posts}}': fmt(its[3].posts),
+    // 項目別 L/S 按分P（小数4桁）
+    '{{item1_posts_l}}': fmtPosts(its[0].postsL),
+    '{{item2_posts_l}}': fmtPosts(its[1].postsL),
+    '{{item3_posts_l}}': fmtPosts(its[2].postsL),
+    '{{item4_posts_l}}': fmtPosts(its[3].postsL),
+    '{{item1_posts_s}}': fmtPosts(its[0].postsS),
+    '{{item2_posts_s}}': fmtPosts(its[1].postsS),
+    '{{item3_posts_s}}': fmtPosts(its[2].postsS),
+    '{{item4_posts_s}}': fmtPosts(its[3].postsS),
+    '{{item1_posts}}': fmtPosts(its[0].posts),
+    '{{item2_posts}}': fmtPosts(its[1].posts),
+    '{{item3_posts}}': fmtPosts(its[2].posts),
+    '{{item4_posts}}': fmtPosts(its[3].posts),
     '{{total_posts}}': String(ov.posts),
     // 金額
     '{{item1_amount}}': fmtAmount(its[0].amount),
@@ -1084,7 +1178,8 @@ function generateBillingSummary(yearMonth, carryInL, carryInS) {
     '{{grand_amount}}': fmtAmount(ov.grand),
   };
 
-  return generateBillingPdf_(templateSheet, replacements, '請求サマリ_' + yearMonth);
+  var url = generateBillingPdf_(templateSheet, replacements, '請求サマリ_' + yearMonth);
+  return { url: url, data: data };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
