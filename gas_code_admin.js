@@ -5,7 +5,8 @@
 //   - 日報PDF → 日次PDF出力             : 「設定」B1の年月日で日報PDFを生成
 //   - 日報PDF → 月次サマリPDF出力       : カテゴリ別の月次サマリPDF（日数・延べ人数）
 //   - 割り振り → #2 から最新データ取り込み : 日報→「割り振り台帳」へ増分同期
-//   - 割り振り → 月次サマリPDF出力       : 4請求項目別の月次合計PDF（請求書用）
+//   - 割り振り → 月次サマリPDF出力       : 4請求項目別の月次サマリPDF（クライアント送付用）
+//   - 割り振り → 請求集計シートを更新   : 社内確認用シート（L/S別ポスト数・時間・金額の詳細）
 //   - 割り振り → 自動取り込みON/OFF     : シート起動時の自動同期
 //
 // セットアップ:
@@ -13,7 +14,7 @@
 //   2. 以下のテンプレートシートを作成（プレースホルダ付き）:
 //        ・「テンプレート_日報」       … 日次PDF用
 //        ・「テンプレート_月次サマリ」 … カテゴリ別 月次サマリPDF用
-//        ・「テンプレート_請求サマリ」 … 4請求項目別 月次サマリPDF用
+//        ・「テンプレート_請求サマリ」 … 4請求項目別 月次サマリPDF用（クライアント送付）
 //   3. メニューが現れない場合はシートを再読込
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -28,6 +29,11 @@ const CONFIG = {
   RESPONSIBLE_PERSON: '伊藤友哉（arsaffix Inc.）',
   ALLOCATION_SHEET_NAME: '割り振り台帳',
   ALLOCATION_SUMMARY_SHEET_NAME: '割り振り集計',
+  BILLING_DETAIL_SHEET_NAME: '請求集計',
+  // 請求単価（クライアント請求用 / 年間支払計画書ベース、社内ロジック）
+  LEADER_DAILY_RATE: 36000,     // L: テクニカルディレクターおよびリーダー（円/日=ポスト）
+  SUPPORTER_DAILY_RATE: 29400,  // S: テクニカルサポーター（円/日=ポスト）
+  TAX_RATE: 0.10,               // 消費税
 };
 
 // ── 4請求項目の定義（割り振り台帳用） ──────────────────
@@ -82,7 +88,8 @@ function onOpen() {
     .addItem('#2 から最新データを取り込み', 'runSyncAllocation')
     .addSeparator()
     .addItem('集計シートを作成/更新', 'runUpsertAllocationSummary')
-    .addItem('請求項目別 月次サマリPDF出力', 'runBillingSummaryFromSheet')
+    .addItem('請求集計シートを更新（社内確認用）', 'runUpsertBillingDetail')
+    .addItem('請求項目別 月次サマリPDF出力（クライアント送付用）', 'runBillingSummaryFromSheet')
     .addSeparator()
     .addItem('自動取り込みをON（推奨）', 'installAutoSyncTrigger')
     .addItem('自動取り込みをOFF', 'removeAutoSyncTrigger')
@@ -150,6 +157,29 @@ function runSummaryFromSheet() {
   } catch (err) {
     ui.alert('エラー: ' + err.message);
   }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 設定シートの繰越セル(B2=L繰越H, B3=S繰越H)を読む。
+//   ラベルが未設定なら A2/A3 にラベルを書き込んで返す。値が無ければ 0。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function readCarryFromSettings_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('設定');
+  if (!sheet) return { L: 0, S: 0 };
+
+  // ラベル未設定なら自動で書く（既存値は壊さない）
+  if (!sheet.getRange('A2').getValue()) sheet.getRange('A2').setValue('L繰越H(前月)');
+  if (!sheet.getRange('A3').getValue()) sheet.getRange('A3').setValue('S繰越H(前月)');
+
+  var bL = sheet.getRange('B2').getValue();
+  var bS = sheet.getRange('B3').getValue();
+  var nL = typeof bL === 'number' ? bL : parseFloat(bL);
+  var nS = typeof bS === 'number' ? bS : parseFloat(bS);
+  return {
+    L: (isFinite(nL) && nL >= 0) ? nL : 0,
+    S: (isFinite(nS) && nS >= 0) ? nS : 0,
+  };
 }
 
 // ── 日付をYYYY-MM-DD文字列に変換 ──────────────────
@@ -662,25 +692,291 @@ function ensureAllocationSummarySheet_() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 4請求項目別 月次サマリPDF: 割り振り台帳の L〜O 列を月で集計し、
+// 請求集計シート（社内確認用）: 「設定」B1の月を Cルールで再集計し、
+//   項目別の 時間・L/S別ポスト数・金額・延べ日数・延べ人数 をシートに表示。
+//   請求書は別途社内フォーマットで作成。本シートは数字の根拠表示用。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function runUpsertBillingDetail() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('設定');
+  if (!sheet) {
+    ui.alert('「設定」シートが見つかりません。先に「日報PDF → PDF出力」を一度実行して「設定」シートを作成してください。');
+    return;
+  }
+  var ym = String(sheet.getRange('B1').getValue()).trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    ui.alert('請求集計は YYYY-MM 形式で指定してください（例: 2026-04）。');
+    return;
+  }
+  var carry = readCarryFromSettings_();
+  try {
+    upsertBillingDetailSheet(ym, carry.L, carry.S);
+    ui.alert('「' + CONFIG.BILLING_DETAIL_SHEET_NAME + '」シートを更新しました: ' + ym
+      + '\n（前月繰越: L=' + carry.L + 'H, S=' + carry.S + 'H）');
+  } catch (err) {
+    ui.alert('エラー: ' + err.message);
+  }
+}
+
+function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
+  var data = aggregateBillingData_(yearMonth, carryInL, carryInS);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = CONFIG.BILLING_DETAIL_SHEET_NAME;
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+  sheet.clear();
+
+  var itemLabels = [
+    '①実施計画策定・全体管理',
+    '②機器運用',
+    '③設営管理・技術支援',
+    '④各事業におけるテクニカルマネジメント',
+  ];
+  var L = CONFIG.LEADER_DAILY_RATE;
+  var S = CONFIG.SUPPORTER_DAILY_RATE;
+  var ov = data.overall;
+
+  // タイトル
+  sheet.getRange('A1').setValue('請求集計 (' + yearMonth + ')')
+    .setFontWeight('bold').setFontSize(14);
+  sheet.getRange('A2').setValue(
+    '社内確認用。L/S別に「当月実働H + 前月繰越H → floor(/8) = みなしP, 余りは翌月繰越H」。'
+    + ' L単価=' + L + '円/ポスト, S単価=' + S + '円/ポスト'
+  );
+
+  // ── L/S 精算サマリ ────────────────────────────
+  sheet.getRange('A4').setValue('【L/S別 ポスト精算】').setFontWeight('bold').setBackground('#dbe9f7');
+  var lsHeaders = ['区分', '当月実働H', '前月繰越H', '使用可能H', 'みなしP', '翌月繰越H', '単価(円)', '金額(円)'];
+  sheet.getRange(5, 1, 1, lsHeaders.length).setValues([lsHeaders])
+    .setFontWeight('bold').setBackground('#e8eaed').setHorizontalAlignment('center');
+  var lsRows = [
+    ['L', ov.hoursL, ov.carryInL, ov.availL, ov.deemedPostsL, ov.carryOutL, L, ov.deemedPostsL * L],
+    ['S', ov.hoursS, ov.carryInS, ov.availS, ov.deemedPostsS, ov.carryOutS, S, ov.deemedPostsS * S],
+  ];
+  sheet.getRange(6, 1, lsRows.length, lsHeaders.length).setValues(lsRows);
+  // 数値書式
+  sheet.getRange(6, 2, 2, 4).setNumberFormat('0.00');  // 時間系（4列: B〜E）
+  sheet.getRange(6, 5, 2, 1).setNumberFormat('0');     // みなしP 整数
+  sheet.getRange(6, 7, 2, 2).setNumberFormat('#,##0'); // 単価・金額
+
+  // 税抜/消費税/税込
+  sheet.getRange(9, 7).setValue('税抜小計').setFontWeight('bold').setHorizontalAlignment('right');
+  sheet.getRange(9, 8).setValue(ov.subtotal).setFontWeight('bold').setNumberFormat('#,##0');
+  sheet.getRange(10, 7).setValue('消費税(' + Math.round(CONFIG.TAX_RATE * 100) + '%)').setFontWeight('bold').setHorizontalAlignment('right');
+  sheet.getRange(10, 8).setValue(ov.tax).setFontWeight('bold').setNumberFormat('#,##0');
+  sheet.getRange(11, 7).setValue('税込合計').setFontWeight('bold').setBackground('#fff4d6').setHorizontalAlignment('right');
+  sheet.getRange(11, 8).setValue(ov.grand).setFontWeight('bold').setBackground('#fff4d6').setNumberFormat('#,##0');
+
+  // ── 翌月繰越 案内 ────────────────────────────
+  sheet.getRange('A13').setValue(
+    '★翌月繰越（次月の「設定」B2/B3 に転記）: L=' + ov.carryOutL + 'H, S=' + ov.carryOutS + 'H'
+  ).setFontWeight('bold').setBackground('#fff4d6');
+
+  // ── 項目別 内訳 ────────────────────────────
+  sheet.getRange('A15').setValue('【項目別 内訳（みなしPを当月実働時間比で按分）】')
+    .setFontWeight('bold').setBackground('#dbe9f7');
+  var itemHeaders = ['項目', 'L時間(h)', 'L按分P', 'S時間(h)', 'S按分P', '金額計(円)', '延べ日数', '延べ人数'];
+  sheet.getRange(16, 1, 1, itemHeaders.length).setValues([itemHeaders])
+    .setFontWeight('bold').setBackground('#e8eaed').setHorizontalAlignment('center');
+
+  var itemRows = data.items.map(function(it, i) {
+    return [itemLabels[i], it.hoursL, it.postsL, it.hoursS, it.postsS, it.amount, it.days, it.personDays];
+  });
+  sheet.getRange(17, 1, itemRows.length, itemHeaders.length).setValues(itemRows);
+  sheet.getRange(17, 2, itemRows.length, 1).setNumberFormat('0.00');  // L時間
+  sheet.getRange(17, 3, itemRows.length, 1).setNumberFormat('0.00');  // L按分P
+  sheet.getRange(17, 4, itemRows.length, 1).setNumberFormat('0.00');  // S時間
+  sheet.getRange(17, 5, itemRows.length, 1).setNumberFormat('0.00');  // S按分P
+  sheet.getRange(17, 6, itemRows.length, 1).setNumberFormat('#,##0'); // 金額
+  sheet.getRange(17, 7, itemRows.length, 2).setNumberFormat('0');     // 延べ日数・人数
+
+  // 更新日時
+  var noteRow = 17 + itemRows.length + 2;
+  sheet.getRange(noteRow, 1).setValue(
+    '更新日時: ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')
+  );
+
+  // 列幅
+  sheet.setColumnWidth(1, 260);
+  for (var c = 2; c <= 6; c++) sheet.setColumnWidth(c, 100);
+  sheet.setColumnWidth(7, 110);
+  sheet.setColumnWidth(8, 130);
+
+  sheet.setFrozenRows(5);
+  return sheet;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// aggregateBillingData_: 割り振り台帳から1ヶ月分を集計し、項目別の
+//   時間/日数/延べ人数/ポスト数(L/S別)/金額を返す内部ヘルパー。
+//
+//   ポスト数の数え方ルール（"Cルール: 時間按分"）:
+//     ・1行（=1人の1日分）= 1ポストとして扱う（勤務時間に関わらず）
+//     ・項目内訳は、その日の項目時間比で按分
+//       例: 4/15 佐藤さん(S) [②4h + ③2h] → ②=0.67ポスト, ③=0.33ポスト
+//     ・L単価 36,000円/ポスト、S単価 29,400円/ポスト で金額算出
+//     ・ポスト種別はD列。L/S以外の値はLとみなす（保守側）。
+//
+//   日数・延べ人数（既存仕様、互換維持）:
+//     ・日数       … その項目に時間が入ったユニーク日付の数
+//     ・延べ人数   … その項目に時間が入った (氏名×日付) のユニーク組み合わせ数
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function aggregateBillingData_(yearMonth, carryInL, carryInS) {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('月次集計は YYYY-MM 形式で指定してください');
+  }
+  carryInL = (typeof carryInL === 'number' && isFinite(carryInL) && carryInL >= 0) ? carryInL : 0;
+  carryInS = (typeof carryInS === 'number' && isFinite(carryInS) && carryInS >= 0) ? carryInS : 0;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allocSheet = ss.getSheetByName(CONFIG.ALLOCATION_SHEET_NAME);
+  if (!allocSheet) {
+    throw new Error('「' + CONFIG.ALLOCATION_SHEET_NAME + '」シートが見つかりません。先に取り込みを実行してください。');
+  }
+
+  var lastRow = allocSheet.getLastRow();
+  if (lastRow < 2) {
+    throw new Error('割り振り台帳にデータがありません');
+  }
+
+  var dates = allocSheet.getRange(2, ALLOC_COL.DATE, lastRow - 1, 1).getValues();
+  var names = allocSheet.getRange(2, ALLOC_COL.NAME, lastRow - 1, 1).getValues();
+  var posts = allocSheet.getRange(2, ALLOC_COL.POST, lastRow - 1, 1).getValues();
+  var items = allocSheet.getRange(2, ALLOC_COL.ITEM1, lastRow - 1, 4).getValues();
+
+  // 項目別 L/S 別 時間を集計
+  var hoursL = [0, 0, 0, 0];          // L が項目kに投入した時間
+  var hoursS = [0, 0, 0, 0];          // S が項目kに投入した時間
+  var itemDates = [{}, {}, {}, {}];
+  var itemPersonDays = [{}, {}, {}, {}];
+  var allDates = {};
+  var allPersonDays = {};
+  var matched = 0;
+
+  for (var i = 0; i < dates.length; i++) {
+    var d = toDateStr(dates[i][0]);
+    if (!d || d.substring(0, 7) !== yearMonth) continue;
+    matched++;
+    var name = String(names[i][0] || '').trim();
+    var post = String(posts[i][0] || '').trim().toUpperCase();
+    if (post !== 'L' && post !== 'S') post = 'L'; // 不明値は保守的にLへ
+
+    var hasAny = false;
+    for (var j = 0; j < 4; j++) {
+      var hv = items[i][j];
+      if (typeof hv !== 'number' || hv <= 0) continue;
+      if (post === 'L') hoursL[j] += hv;
+      else hoursS[j] += hv;
+      itemDates[j][d] = true;
+      if (name) itemPersonDays[j][name + '|' + d] = true;
+      hasAny = true;
+    }
+    if (hasAny) {
+      allDates[d] = true;
+      if (name) allPersonDays[name + '|' + d] = true;
+    }
+  }
+
+  if (matched === 0) {
+    throw new Error(yearMonth + ' の割り振りデータが見つかりません');
+  }
+
+  // L/S 別の総時間 → 繰越を加味して みなしP と 翌月繰越 を算出
+  var totalHoursL = 0, totalHoursS = 0;
+  for (var k = 0; k < 4; k++) { totalHoursL += hoursL[k]; totalHoursS += hoursS[k]; }
+
+  var availL = totalHoursL + carryInL;
+  var availS = totalHoursS + carryInS;
+  var deemedL = Math.floor(availL / 8);
+  var deemedS = Math.floor(availS / 8);
+  var carryOutL = Math.round((availL - deemedL * 8) * 100) / 100;
+  var carryOutS = Math.round((availS - deemedS * 8) * 100) / 100;
+
+  // 項目別配賦: みなしP を 当月実働の時間比で按分（繰越は項目に紐付けないため当月実働ベース）
+  var L = CONFIG.LEADER_DAILY_RATE;
+  var S = CONFIG.SUPPORTER_DAILY_RATE;
+  var itemsOut = [];
+  for (var m = 0; m < 4; m++) {
+    var pL = totalHoursL > 0 ? (hoursL[m] / totalHoursL) * deemedL : 0;
+    var pS = totalHoursS > 0 ? (hoursS[m] / totalHoursS) * deemedS : 0;
+    var amount = pL * L + pS * S;
+    itemsOut.push({
+      key: BILLING_ITEMS[m].key,
+      hoursL: hoursL[m],
+      hoursS: hoursS[m],
+      hours: hoursL[m] + hoursS[m],
+      postsL: pL,
+      postsS: pS,
+      posts: pL + pS,
+      amount: amount,
+      days: Object.keys(itemDates[m]).length,
+      personDays: Object.keys(itemPersonDays[m]).length,
+    });
+  }
+
+  var subtotal = deemedL * L + deemedS * S;
+  var tax = Math.round(subtotal * CONFIG.TAX_RATE);
+  var grand = subtotal + tax;
+
+  return {
+    yearMonth: yearMonth,
+    matched: matched,
+    items: itemsOut,
+    overall: {
+      hoursL: totalHoursL,
+      hoursS: totalHoursS,
+      hours: totalHoursL + totalHoursS,
+      carryInL: carryInL,
+      carryInS: carryInS,
+      availL: availL,
+      availS: availS,
+      deemedPostsL: deemedL,
+      deemedPostsS: deemedS,
+      posts: deemedL + deemedS,
+      carryOutL: carryOutL,
+      carryOutS: carryOutS,
+      subtotal: subtotal,
+      tax: tax,
+      grand: grand,
+      days: Object.keys(allDates).length,
+      personDays: Object.keys(allPersonDays).length,
+    },
+  };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 4請求項目別 月次サマリPDF（クライアント送付用）: 割り振り台帳を月で集計し、
 //   「テンプレート_請求サマリ」のプレースホルダを置換してPDF出力。
+//   L/S別の「当月実働H + 前月繰越H → みなしP → 翌月繰越H」方式で算出。
 //
-//   集計仕様:
-//     ・各項目への所属判定は「その項目に時間 > 0 が入っている行」
-//       （1行が複数項目に分かれている場合は各項目に二重カウントされる）
-//     ・日数         … その項目に時間が入ったユニーク日付の数
-//     ・延べ人数     … その項目に時間が入った (氏名 × 日付) のユニーク組み合わせ数
-//     ・全体の総数   … いずれかの項目に時間が入った行のみで集計（未割り振り行は除外）
-//
-//   プレースホルダ:
+//   プレースホルダ（テンプレート側で必要な分だけ配置）:
 //     {{year_month}}                           … 例 "2026-04"
-//     {{item1_total}} 〜 {{item4_total}}       … 各項目の月時間合計（h、小数2桁）
-//     {{item1_days}}  〜 {{item4_days}}        … 各項目の日数（整数）
+//     {{responsible}}                          … 担当者名
+//     [L/S精算]
+//     {{hours_l}} / {{hours_s}}                … 当月実働H（割り振り台帳ベース）
+//     {{carry_in_l}} / {{carry_in_s}}          … 前月繰越H（設定B2/B3より）
+//     {{avail_l}} / {{avail_s}}                … 使用可能H（実働+繰越）
+//     {{deemed_l}} / {{deemed_s}}              … みなしP（=floor(使用可能/8)、整数）
+//     {{carry_out_l}} / {{carry_out_s}}        … 翌月繰越H
+//     [項目別 内訳]
+//     {{item1_total}} 〜 {{item4_total}}       … 各項目の月時間合計（L+S、小数2桁）
+//     {{item1_hours_l}} 〜 {{item4_hours_l}}   … 各項目のL時間（h）
+//     {{item1_hours_s}} 〜 {{item4_hours_s}}   … 各項目のS時間（h）
+//     {{item1_posts_l}} 〜 {{item4_posts_l}}   … 各項目のL按分P（小数2桁）
+//     {{item1_posts_s}} 〜 {{item4_posts_s}}   … 各項目のS按分P（小数2桁）
+//     {{item1_posts}}   〜 {{item4_posts}}     … 各項目のポスト合計（L+S、小数2桁）
+//     {{item1_amount}}  〜 {{item4_amount}}    … 各項目の金額（円、整数）
+//     {{item1_days}}  〜 {{item4_days}}        … 各項目の延べ日数（整数）
 //     {{item1_persons}} 〜 {{item4_persons}}   … 各項目の延べ人数（整数）
+//     [全体]
 //     {{total_days}}                           … 全体のユニーク日数
 //     {{total_persons}}                        … 全体の延べ人数
+//     {{total_posts}}                          … 全体の みなしP合計
 //     {{grand_total}}                          … 4項目の時間総合計（h、小数2桁）
-//     {{responsible}}                          … 担当者名
+//     {{subtotal_amount}}                      … 税抜小計（円）
+//     {{tax_amount}}                           … 消費税額（円）
+//     {{grand_amount}}                         … 税込合計（円）
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function runBillingSummaryFromSheet() {
@@ -699,103 +995,104 @@ function runBillingSummaryFromSheet() {
     return;
   }
 
-  ui.alert('請求項目別 月次サマリPDFを生成します: ' + ym);
+  var carry = readCarryFromSettings_();
+  ui.alert('請求項目別 月次サマリPDFを生成します: ' + ym
+    + '\n（前月繰越: L=' + carry.L + 'H, S=' + carry.S + 'H）');
 
   try {
-    var url = generateBillingSummary(ym);
+    var url = generateBillingSummary(ym, carry.L, carry.S);
     ui.alert('完了: PDFを出力しました。\n' + url);
   } catch (err) {
     ui.alert('エラー: ' + err.message);
   }
 }
 
-function generateBillingSummary(yearMonth) {
-  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
-    throw new Error('月次サマリは YYYY-MM 形式で指定してください');
-  }
-
+function generateBillingSummary(yearMonth, carryInL, carryInS) {
+  var data = aggregateBillingData_(yearMonth, carryInL, carryInS);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var allocSheet = ss.getSheetByName(CONFIG.ALLOCATION_SHEET_NAME);
-  if (!allocSheet) {
-    throw new Error('「' + CONFIG.ALLOCATION_SHEET_NAME + '」シートが見つかりません。先に取り込みを実行してください。');
-  }
-
-  var lastRow = allocSheet.getLastRow();
-  if (lastRow < 2) {
-    throw new Error('割り振り台帳にデータがありません');
-  }
-
-  // B:日付 / C:氏名 / L〜O:4項目時間
-  var dates = allocSheet.getRange(2, ALLOC_COL.DATE, lastRow - 1, 1).getValues();
-  var names = allocSheet.getRange(2, ALLOC_COL.NAME, lastRow - 1, 1).getValues();
-  var items = allocSheet.getRange(2, ALLOC_COL.ITEM1, lastRow - 1, 4).getValues();
-
-  // 項目ごとの集計バケット
-  var totals = [0, 0, 0, 0];
-  var itemDates = [{}, {}, {}, {}];        // 項目別の日数（ユニーク日付）
-  var itemPersonDays = [{}, {}, {}, {}];   // 項目別の延べ人数（氏名×日付）
-  // 全体（請求対象に時間が入った行のみ集計）
-  var allDates = {};
-  var allPersonDays = {};
-  var matched = 0;
-
-  for (var i = 0; i < dates.length; i++) {
-    var d = toDateStr(dates[i][0]);
-    if (!d || d.substring(0, 7) !== yearMonth) continue;
-    matched++;
-    var name = String(names[i][0] || '').trim();
-    var hasAny = false;
-
-    for (var j = 0; j < 4; j++) {
-      var v = items[i][j];
-      if (typeof v !== 'number' || v <= 0) continue;
-      totals[j] += v;
-      itemDates[j][d] = true;
-      if (name) itemPersonDays[j][name + '|' + d] = true;
-      hasAny = true;
-    }
-
-    // 「全体」は4項目のいずれかに時間が入った行のみカウント（未割り振り行は除外）
-    if (hasAny) {
-      allDates[d] = true;
-      if (name) allPersonDays[name + '|' + d] = true;
-    }
-  }
-
-  if (matched === 0) {
-    throw new Error(yearMonth + ' の割り振りデータが見つかりません');
-  }
-
-  var grand = totals[0] + totals[1] + totals[2] + totals[3];
-  var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };
-  var sz = function(o) { return String(Object.keys(o).length); };
-
-  var replacements = {
-    '{{year_month}}': yearMonth,
-    '{{item1_total}}': fmt(totals[0]),
-    '{{item2_total}}': fmt(totals[1]),
-    '{{item3_total}}': fmt(totals[2]),
-    '{{item4_total}}': fmt(totals[3]),
-    '{{item1_days}}': sz(itemDates[0]),
-    '{{item2_days}}': sz(itemDates[1]),
-    '{{item3_days}}': sz(itemDates[2]),
-    '{{item4_days}}': sz(itemDates[3]),
-    '{{item1_persons}}': sz(itemPersonDays[0]),
-    '{{item2_persons}}': sz(itemPersonDays[1]),
-    '{{item3_persons}}': sz(itemPersonDays[2]),
-    '{{item4_persons}}': sz(itemPersonDays[3]),
-    '{{total_days}}': sz(allDates),
-    '{{total_persons}}': sz(allPersonDays),
-    '{{grand_total}}': fmt(grand),
-    '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
-  };
-
   var templateSheet = ss.getSheetByName(CONFIG.BILLING_SUMMARY_TEMPLATE_SHEET_NAME);
   if (!templateSheet) {
     throw new Error('「' + CONFIG.BILLING_SUMMARY_TEMPLATE_SHEET_NAME + '」シートが見つかりません');
   }
 
-  var tmpName = '_tmp_請求サマリ_' + yearMonth;
+  var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };
+  var fmtAmount = function(n) { return String(Math.round(n)); };
+  var its = data.items;
+  var ov = data.overall;
+
+  var replacements = {
+    '{{year_month}}': yearMonth,
+    '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
+    // L/S精算サマリ
+    '{{hours_l}}': fmt(ov.hoursL),
+    '{{hours_s}}': fmt(ov.hoursS),
+    '{{carry_in_l}}': fmt(ov.carryInL),
+    '{{carry_in_s}}': fmt(ov.carryInS),
+    '{{avail_l}}': fmt(ov.availL),
+    '{{avail_s}}': fmt(ov.availS),
+    '{{deemed_l}}': String(ov.deemedPostsL),
+    '{{deemed_s}}': String(ov.deemedPostsS),
+    '{{carry_out_l}}': fmt(ov.carryOutL),
+    '{{carry_out_s}}': fmt(ov.carryOutS),
+    // 項目別 時間（L+S）
+    '{{item1_total}}': fmt(its[0].hours),
+    '{{item2_total}}': fmt(its[1].hours),
+    '{{item3_total}}': fmt(its[2].hours),
+    '{{item4_total}}': fmt(its[3].hours),
+    '{{grand_total}}': fmt(ov.hours),
+    // 項目別 L時間 / S時間
+    '{{item1_hours_l}}': fmt(its[0].hoursL),
+    '{{item2_hours_l}}': fmt(its[1].hoursL),
+    '{{item3_hours_l}}': fmt(its[2].hoursL),
+    '{{item4_hours_l}}': fmt(its[3].hoursL),
+    '{{item1_hours_s}}': fmt(its[0].hoursS),
+    '{{item2_hours_s}}': fmt(its[1].hoursS),
+    '{{item3_hours_s}}': fmt(its[2].hoursS),
+    '{{item4_hours_s}}': fmt(its[3].hoursS),
+    // 項目別 延べ日数・延べ人数（説明資料用）
+    '{{item1_days}}': String(its[0].days),
+    '{{item2_days}}': String(its[1].days),
+    '{{item3_days}}': String(its[2].days),
+    '{{item4_days}}': String(its[3].days),
+    '{{total_days}}': String(ov.days),
+    '{{item1_persons}}': String(its[0].personDays),
+    '{{item2_persons}}': String(its[1].personDays),
+    '{{item3_persons}}': String(its[2].personDays),
+    '{{item4_persons}}': String(its[3].personDays),
+    '{{total_persons}}': String(ov.personDays),
+    // 項目別 L/S 按分P
+    '{{item1_posts_l}}': fmt(its[0].postsL),
+    '{{item2_posts_l}}': fmt(its[1].postsL),
+    '{{item3_posts_l}}': fmt(its[2].postsL),
+    '{{item4_posts_l}}': fmt(its[3].postsL),
+    '{{item1_posts_s}}': fmt(its[0].postsS),
+    '{{item2_posts_s}}': fmt(its[1].postsS),
+    '{{item3_posts_s}}': fmt(its[2].postsS),
+    '{{item4_posts_s}}': fmt(its[3].postsS),
+    '{{item1_posts}}': fmt(its[0].posts),
+    '{{item2_posts}}': fmt(its[1].posts),
+    '{{item3_posts}}': fmt(its[2].posts),
+    '{{item4_posts}}': fmt(its[3].posts),
+    '{{total_posts}}': String(ov.posts),
+    // 金額
+    '{{item1_amount}}': fmtAmount(its[0].amount),
+    '{{item2_amount}}': fmtAmount(its[1].amount),
+    '{{item3_amount}}': fmtAmount(its[2].amount),
+    '{{item4_amount}}': fmtAmount(its[3].amount),
+    '{{subtotal_amount}}': fmtAmount(ov.subtotal),
+    '{{tax_amount}}': fmtAmount(ov.tax),
+    '{{grand_amount}}': fmtAmount(ov.grand),
+  };
+
+  return generateBillingPdf_(templateSheet, replacements, '請求サマリ_' + yearMonth);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// generateBillingPdf_: テンプレートをコピーしてプレースホルダ置換 → PDF化 → 保存。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function generateBillingPdf_(templateSheet, replacements, fileName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tmpName = '_tmp_' + fileName;
   var tmpSheet = templateSheet.copyTo(ss).setName(tmpName);
 
   var range = tmpSheet.getDataRange();
@@ -815,8 +1112,6 @@ function generateBillingSummary(yearMonth) {
   SpreadsheetApp.flush();
 
   var folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
-  var fileName = '請求サマリ_' + yearMonth;
-
   var existing = folder.getFilesByName(fileName + '.pdf');
   while (existing.hasNext()) existing.next().setTrashed(true);
 
@@ -835,7 +1130,7 @@ function generateBillingSummary(yearMonth) {
   try {
     var pdfBlob = fetchPdfWithRetry_(pdfUrl, fileName);
     var pdfFile = folder.createFile(pdfBlob);
-    Logger.log('請求サマリPDF保存完了: ' + pdfFile.getUrl());
+    Logger.log(fileName + ' PDF保存完了: ' + pdfFile.getUrl());
     return pdfFile.getUrl();
   } finally {
     ss.deleteSheet(tmpSheet);
