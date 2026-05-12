@@ -662,13 +662,25 @@ function ensureAllocationSummarySheet_() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 4請求項目別 月次サマリPDF: 割り振り台帳の L〜O 列を月で合計し、
+// 4請求項目別 月次サマリPDF: 割り振り台帳の L〜O 列を月で集計し、
 //   「テンプレート_請求サマリ」のプレースホルダを置換してPDF出力。
+//
+//   集計仕様:
+//     ・各項目への所属判定は「その項目に時間 > 0 が入っている行」
+//       （1行が複数項目に分かれている場合は各項目に二重カウントされる）
+//     ・日数         … その項目に時間が入ったユニーク日付の数
+//     ・延べ人数     … その項目に時間が入った (氏名 × 日付) のユニーク組み合わせ数
+//     ・全体の総数   … いずれかの項目に時間が入った行のみで集計（未割り振り行は除外）
+//
 //   プレースホルダ:
-//     {{year_month}}     … 例 "2026-04"
-//     {{item1_total}} 〜 {{item4_total}}  … 各項目の月合計（h、小数2桁）
-//     {{grand_total}}    … 4項目の総合計（h、小数2桁）
-//     {{responsible}}    … 担当者名
+//     {{year_month}}                           … 例 "2026-04"
+//     {{item1_total}} 〜 {{item4_total}}       … 各項目の月時間合計（h、小数2桁）
+//     {{item1_days}}  〜 {{item4_days}}        … 各項目の日数（整数）
+//     {{item1_persons}} 〜 {{item4_persons}}   … 各項目の延べ人数（整数）
+//     {{total_days}}                           … 全体のユニーク日数
+//     {{total_persons}}                        … 全体の延べ人数
+//     {{grand_total}}                          … 4項目の時間総合計（h、小数2桁）
+//     {{responsible}}                          … 担当者名
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function runBillingSummaryFromSheet() {
@@ -713,22 +725,40 @@ function generateBillingSummary(yearMonth) {
     throw new Error('割り振り台帳にデータがありません');
   }
 
-  // B:日付, L〜O:4項目時間 をまとめて取得
-  var dateCol = ALLOC_COL.DATE;       // 2
-  var startCol = ALLOC_COL.ITEM1;     // 12
-  var width = ALLOC_COL.ITEM4 - ALLOC_COL.ITEM1 + 1;  // 4
-  var dates = allocSheet.getRange(2, dateCol, lastRow - 1, 1).getValues();
-  var items = allocSheet.getRange(2, startCol, lastRow - 1, width).getValues();
+  // B:日付 / C:氏名 / L〜O:4項目時間
+  var dates = allocSheet.getRange(2, ALLOC_COL.DATE, lastRow - 1, 1).getValues();
+  var names = allocSheet.getRange(2, ALLOC_COL.NAME, lastRow - 1, 1).getValues();
+  var items = allocSheet.getRange(2, ALLOC_COL.ITEM1, lastRow - 1, 4).getValues();
 
+  // 項目ごとの集計バケット
   var totals = [0, 0, 0, 0];
+  var itemDates = [{}, {}, {}, {}];        // 項目別の日数（ユニーク日付）
+  var itemPersonDays = [{}, {}, {}, {}];   // 項目別の延べ人数（氏名×日付）
+  // 全体（請求対象に時間が入った行のみ集計）
+  var allDates = {};
+  var allPersonDays = {};
   var matched = 0;
+
   for (var i = 0; i < dates.length; i++) {
     var d = toDateStr(dates[i][0]);
     if (!d || d.substring(0, 7) !== yearMonth) continue;
     matched++;
-    for (var j = 0; j < width; j++) {
+    var name = String(names[i][0] || '').trim();
+    var hasAny = false;
+
+    for (var j = 0; j < 4; j++) {
       var v = items[i][j];
-      if (typeof v === 'number') totals[j] += v;
+      if (typeof v !== 'number' || v <= 0) continue;
+      totals[j] += v;
+      itemDates[j][d] = true;
+      if (name) itemPersonDays[j][name + '|' + d] = true;
+      hasAny = true;
+    }
+
+    // 「全体」は4項目のいずれかに時間が入った行のみカウント（未割り振り行は除外）
+    if (hasAny) {
+      allDates[d] = true;
+      if (name) allPersonDays[name + '|' + d] = true;
     }
   }
 
@@ -738,6 +768,7 @@ function generateBillingSummary(yearMonth) {
 
   var grand = totals[0] + totals[1] + totals[2] + totals[3];
   var fmt = function(n) { return (Math.round(n * 100) / 100).toString(); };
+  var sz = function(o) { return String(Object.keys(o).length); };
 
   var replacements = {
     '{{year_month}}': yearMonth,
@@ -745,6 +776,16 @@ function generateBillingSummary(yearMonth) {
     '{{item2_total}}': fmt(totals[1]),
     '{{item3_total}}': fmt(totals[2]),
     '{{item4_total}}': fmt(totals[3]),
+    '{{item1_days}}': sz(itemDates[0]),
+    '{{item2_days}}': sz(itemDates[1]),
+    '{{item3_days}}': sz(itemDates[2]),
+    '{{item4_days}}': sz(itemDates[3]),
+    '{{item1_persons}}': sz(itemPersonDays[0]),
+    '{{item2_persons}}': sz(itemPersonDays[1]),
+    '{{item3_persons}}': sz(itemPersonDays[2]),
+    '{{item4_persons}}': sz(itemPersonDays[3]),
+    '{{total_days}}': sz(allDates),
+    '{{total_persons}}': sz(allPersonDays),
     '{{grand_total}}': fmt(grand),
     '{{responsible}}': CONFIG.RESPONSIBLE_PERSON,
   };
