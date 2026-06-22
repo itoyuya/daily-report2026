@@ -77,6 +77,20 @@ var SUMMARY_CATEGORIES = [
   { key: 'other',      label: 'その他' },
 ];
 
+// ── PDF表示用 氏名マッピング ──────────────────
+//   契約関係書類（日報PDF）は正式表記で記載する経理依頼への対応。
+//   スプレッドシートの値・各種数式/関数はカタカナ「イトウ」のまま運用し、
+//   日報PDFに書き出すときだけ正式表記へ置換する（表示専用、データは不変）。
+//   定義に無い氏名はそのまま表示する。
+var PDF_DISPLAY_NAME_MAP = {
+  'イトウ': '伊藤',
+};
+function displayName_(name) {
+  var key = String(name == null ? '' : name).trim();
+  if (PDF_DISPLAY_NAME_MAP[key]) return PDF_DISPLAY_NAME_MAP[key];
+  return name == null ? '' : name;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // メニュー: スプレッドシートを開いたときにカスタムメニューを追加
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -352,7 +366,7 @@ function generatePdfForDate_(dateStr, rows) {
   var postLabel = function(v) { return v === 'L' ? 'リーダー' : v === 'S' ? 'サポーター' : ''; };
   var shifts = rows.map(function(r) {
     var post = r[3] ? '(' + postLabel(r[3]) + ')' : '';
-    return (r[2] || '') + post + '：' + formatTime(r[4]) + '〜' + formatTime(r[5]) + '（' + r[11] + 'h）';
+    return displayName_(r[2]) + post + '：' + formatTime(r[4]) + '〜' + formatTime(r[5]) + '（' + r[11] + 'h）';
   }).join('\n');
 
   // イベント名／実施業務: 個々の項目単位で重複を除去
@@ -374,7 +388,7 @@ function generatePdfForDate_(dateStr, rows) {
       if (!r[idx]) return null;
       var text = String(r[idx]).replace(/\n/g, '／');
       if (rows.length > 1) {
-        return '【' + (r[2] || '') + '】' + text;
+        return '【' + displayName_(r[2]) + '】' + text;
       }
       return text;
     }).filter(Boolean).join('\n');
@@ -386,7 +400,7 @@ function generatePdfForDate_(dateStr, rows) {
   var notes = rows.map(function(r) {
     if (!r[9]) return null;
     if (rows.length > 1) {
-      return '【' + (r[2] || '') + '】' + r[9];
+      return '【' + displayName_(r[2]) + '】' + r[9];
     }
     return String(r[9]);
   }).filter(Boolean).join('\n');
