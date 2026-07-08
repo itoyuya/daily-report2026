@@ -33,7 +33,7 @@ function doPost(e) {
         'タイムスタンプ', '日付', '氏名', 'ポスト区分',
         '開始時間', '終了時間',
         'イベント名／実施業務', '実施事項', '業務内容', '特記事項等',
-        '気づき・振り返り', '勤務時間'
+        '気づき・振り返り', '勤務時間', '勤務形態'
       ]);
     }
 
@@ -60,6 +60,7 @@ function doPost(e) {
       sanitize(data.notes),
       sanitize(data.reflection),
       hours,
+      sanitize(data.worktype || ''),  // 勤務形態: 現地/リモート（arsaffix内部用・PDF非掲載）
     ]);
 
     return ContentService

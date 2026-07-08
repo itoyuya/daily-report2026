@@ -361,6 +361,21 @@
     </div>
   </div>
 
+  <!-- 勤務形態（交通費の有無・arsaffix内部用。CCBT提出のPDFには出力されない） -->
+  <div class="field">
+    <label>勤務形態 <span class="req">*</span></label>
+    <div style="display:flex; gap:24px; margin-top:4px; flex-wrap:wrap;">
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="radio" name="worktype" value="現地" required style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">現地（交通費あり）</span>
+      </label>
+      <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="radio" name="worktype" value="リモート" style="accent-color:var(--accent); width:18px; height:18px;">
+        <span style="font-size:14px; font-weight:300; color:var(--text);">リモート（交通費なし）</span>
+      </label>
+    </div>
+  </div>
+
   <hr class="section-divider">
 
   <!-- 業務時間 -->
@@ -487,6 +502,7 @@
     <tr><th>日付</th><td id="c_date"></td></tr>
     <tr><th>氏名</th><td id="c_member"></td></tr>
     <tr><th>ポスト区分</th><td id="c_post"></td></tr>
+    <tr><th>勤務形態</th><td id="c_worktype"></td></tr>
     <tr><th>業務時間</th><td id="c_time"></td></tr>
     <tr><th>イベント名／実施業務</th><td id="c_title"></td></tr>
     <tr><th>実施事項</th><td id="c_tasks"></td></tr>
@@ -646,6 +662,13 @@
       return;
     }
 
+    const worktypeVal = document.querySelector('input[name="worktype"]:checked');
+    if (!worktypeVal) {
+      status.textContent = '勤務形態を選択してください。';
+      status.className = 'error';
+      return;
+    }
+
     const titleChecked = Array.from(document.querySelectorAll('input[name="title"]:checked')).map(cb => cb.value);
     if (titleChecked.length === 0) {
       status.textContent = 'イベント名／実施業務を選択してください。';
@@ -657,6 +680,7 @@
       date:       document.getElementById('date').value,
       member:     memberSelect.value === '__other__' ? memberOther.value.trim() : memberSelect.value,
       post:       postVal.value,
+      worktype:   worktypeVal.value,
       start_time: `${sh}:${sm}`,
       end_time:   `${eh}:${em_val}`,
       title:      titleChecked.join('\n'),
@@ -670,6 +694,7 @@
     document.getElementById('c_date').textContent = pendingPayload.date;
     document.getElementById('c_member').textContent = pendingPayload.member;
     document.getElementById('c_post').textContent = pendingPayload.post === 'L' ? '［L］リーダー' : '［S］サポーター';
+    document.getElementById('c_worktype').textContent = pendingPayload.worktype === 'リモート' ? 'リモート（交通費なし）' : '現地（交通費あり）';
     document.getElementById('c_time').textContent = pendingPayload.start_time + ' 〜 ' + pendingPayload.end_time;
     document.getElementById('c_title').textContent = pendingPayload.title;
     document.getElementById('c_tasks').textContent = pendingPayload.tasks || '（未入力）';
