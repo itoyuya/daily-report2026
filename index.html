@@ -541,6 +541,7 @@
     return `${y}-${m}-${day}`;
   }
   document.getElementById('date').value = getTodayStr();
+  document.getElementById('date').max = getTodayStr();
 
   // 時セレクトを 0〜23 で生成
   function buildHourOptions(selectId) {
@@ -644,6 +645,13 @@
       return;
     }
 
+    if (document.getElementById('date').value > getTodayStr()) {
+      status.textContent = '未来の日付は報告できません。日付を確認してください。';
+      status.className = 'error';
+      document.getElementById('date').focus();
+      return;
+    }
+
     const sh = document.getElementById('start_h').value;
     const sm = document.getElementById('start_m').value;
     const eh = document.getElementById('end_h').value;
@@ -652,6 +660,13 @@
     if (!sh || !sm || !eh || !em_val) {
       status.textContent = '業務時間を入力してください。';
       status.className = 'error';
+      return;
+    }
+
+    if (`${sh}:${sm}` === `${eh}:${em_val}`) {
+      status.textContent = '開始時間と終了時間が同じです。業務時間を確認してください。';
+      status.className = 'error';
+      document.getElementById('start_h').focus();
       return;
     }
 
@@ -730,6 +745,7 @@
 
       formEl.reset();
       document.getElementById('date').value = getTodayStr();
+      document.getElementById('date').max = getTodayStr();
       document.getElementById('duration_display').textContent = '';
       memberOther.style.display = 'none';
       memberOther.required = false;
@@ -769,6 +785,7 @@
   // ── 新しい日報ボタン ──
   document.getElementById('newBtn').addEventListener('click', () => {
     document.getElementById('date').value = getTodayStr();
+    document.getElementById('date').max = getTodayStr();
     showForm();
   });
 </script>
