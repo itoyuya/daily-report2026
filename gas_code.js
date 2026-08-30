@@ -56,7 +56,7 @@ function calcWorkHours_(startVal, endVal) {
 //   ※ 管理用スプレッドシート側（gas_code_admin.js）の HOURS_FROZEN にも同じ定義がある。
 //      片方だけ直すと台帳の取り込みで毎回「要確認」に出るので、必ず両方そろえること。
 var HOURS_FROZEN = {
-  '2026-04-17|イトウ': '4月は請求済み。提出済み別紙6が8hのため据え置き（2026-08-31 判断）',
+  // 現在は登録なし。請求済みの月に誤りが見つかり、数字を動かしたくないときにここへ追加する。
 };
 
 function frozenKey_(dateVal, nameVal) {
