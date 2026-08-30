@@ -50,6 +50,19 @@ function calcWorkHours_(startVal, endVal) {
   return mins / 60;
 }
 
+// ── 勤務時間を据え置く行 ──────────────────
+//   請求済みの月で、提出済みの別紙6・請求書と数字を合わせるために値を動かさない行。
+//   キーは 'YYYY-MM-DD|氏名'。再計算・自動再計算の両方で除外する。
+//   ※ 管理用スプレッドシート側（gas_code_admin.js）の HOURS_FROZEN にも同じ定義がある。
+//      片方だけ直すと台帳の取り込みで毎回「要確認」に出るので、必ず両方そろえること。
+var HOURS_FROZEN = {
+  '2026-04-17|イトウ': '4月は請求済み。提出済み別紙6が8hのため据え置き（2026-08-31 判断）',
+};
+
+function frozenKey_(dateVal, nameVal) {
+  return formatDateCell_(dateVal) + '|' + String(nameVal == null ? '' : nameVal).trim();
+}
+
 function formatDateCell_(val) {
   if (val instanceof Date) return Utilities.formatDate(val, 'Asia/Tokyo', 'yyyy-MM-dd');
   return String(val == null ? '' : val);
@@ -129,11 +142,14 @@ function onEditRecalcHours(e) {
   if (lastRow < firstRow) return;
 
   var n = lastRow - firstRow + 1;
-  var times = sheet.getRange(firstRow, COL.START, n, 2).getValues();
+  var meta = sheet.getRange(firstRow, COL.DATE, n, COL.END - COL.DATE + 1).getValues();
   var hours = sheet.getRange(firstRow, COL.HOURS, n, 1).getValues();
-  var next = times.map(function(t, i) {
-    var h = calcWorkHours_(t[0], t[1]);
-    return [h === '' ? hours[i][0] : h];                 // 時刻が読めない行は触らない
+  var next = meta.map(function(m, i) {
+    var date = m[0], name = m[1];
+    var start = m[COL.START - COL.DATE], end = m[COL.END - COL.DATE];
+    if (HOURS_FROZEN[frozenKey_(date, name)]) return [hours[i][0]];   // 据え置き行は触らない
+    var h = calcWorkHours_(start, end);
+    return [h === '' ? hours[i][0] : h];                              // 時刻が読めない行も触らない
   });
   sheet.getRange(firstRow, COL.HOURS, n, 1).setValues(next);
 }
@@ -182,16 +198,20 @@ function runRecalcAllHours() {
   var changed = [];   // [シート行番号, 新しい勤務時間]
   var diffs = [];
   var unreadable = 0;
+  var frozen = 0;
   for (var i = 0; i < n; i++) {
     var h = calcWorkHours_(times[i][0], times[i][1]);
     if (h === '') { unreadable++; continue; }        // 時刻が読めない行は触らない
     if (Number(cur[i][0]) === h) continue;           // 一致している行も触らない
+    if (HOURS_FROZEN[frozenKey_(dates[i][0], names[i][0])]) { frozen++; continue; }
     changed.push([i + 2, h]);
     diffs.push('  ' + (i + 2) + '行目 ' + formatDateCell_(dates[i][0]) + ' ' +
                names[i][0] + '：' + cur[i][0] + ' → ' + h);
   }
 
-  var tail = unreadable > 0 ? '\n\n※ 開始・終了が読めない行が' + unreadable + '件あり、そのままにしました。' : '';
+  var tail = '';
+  if (frozen > 0) tail += '\n\n※ 据え置き指定の行が' + frozen + '件あり、そのままにしました（HOURS_FROZEN）。';
+  if (unreadable > 0) tail += '\n\n※ 開始・終了が読めない行が' + unreadable + '件あり、そのままにしました。';
   if (diffs.length === 0) {
     ui.alert('勤務時間はすべて開始・終了と一致しています。' + tail);
     return;

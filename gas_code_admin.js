@@ -77,6 +77,14 @@ var SUMMARY_CATEGORIES = [
   { key: 'other',      label: 'その他' },
 ];
 
+// ── 勤務時間を据え置く行 ──────────────────
+//   請求済みの月で、提出済みの別紙6・請求書と数字を合わせるために値を動かさない行。
+//   キーは 'YYYY-MM-DD|氏名'。取り込み時の「勤務時間が開始終了と合わない行」の報告から除外する。
+//   ※ 閲覧用スプレッドシート側（gas_code.js）の HOURS_FROZEN と同じ内容にすること。
+var HOURS_FROZEN = {
+  '2026-04-17|イトウ': '4月は請求済み。提出済み別紙6が8hのため据え置き（2026-08-31 判断）',
+};
+
 // ── PDF表示用 氏名マッピング ──────────────────
 //   契約関係書類（日報PDF）は正式表記で記載する経理依頼への対応。
 //   スプレッドシートの値・各種数式/関数はカタカナ「イトウ」のまま運用し、
@@ -727,8 +735,9 @@ function syncAllocationSheet() {
     // 検出は全行に対して行う（取り込めない行こそ知らせる必要がある）
     // 日付型でも 'YYYY-MM-DD' の文字列でも日次PDF・請求集計は一致する。それ以外だけを問題とする
     if (!/^\d{4}-\d{2}-\d{2}$/.test(toDateStr(r[1]))) issues.badDate.push(label);
+    var frozenKey = toDateStr(r[1]) + '|' + String(r[2] == null ? '' : r[2]).trim();
     var h = calcHoursFromTimes_(r[4], r[5]);
-    if (h !== '' && r[11] !== '' && r[11] != null && Number(r[11]) !== h) {
+    if (!HOURS_FROZEN[frozenKey] && h !== '' && r[11] !== '' && r[11] != null && Number(r[11]) !== h) {
       issues.hoursMismatch.push(label + '：勤務時間 ' + r[11] + ' / 開始終了からは ' + h);
     }
 
