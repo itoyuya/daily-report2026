@@ -3,7 +3,7 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 機能:
 //   - 日報PDF → 日次PDF出力                              : 設定_日報の値で日報PDFを生成
-//   - 割り振り → 業務完了報告より最新データを読み込み    : 日報→「割り振り台帳」へ増分同期
+//   - 割り振り → 業務完了報告より最新データを読み込み    : 日報→「割り振り台帳」へ同期（新規追加＋訂正の反映）
 //   - 割り振り → 請求集計シートを更新                    : 社内確認用シート（L/S別ポスト数・時間・金額の詳細）
 //   - 割り振り → 請求項目別 月次サマリPDF出力            : クライアント送付用 月次サマリPDF
 //   - 割り振り → 自動取り込みON/OFF                      : シート起動時の自動同期
@@ -548,15 +548,40 @@ function generateMonthlyReports(yearMonth) {
 function runSyncAllocation() {
   var ui = SpreadsheetApp.getUi();
   try {
-    var n = syncAllocationSheet();
-    if (n === 0) {
-      ui.alert('割り振り台帳: 新しいデータはありませんでした。');
-    } else {
-      ui.alert('割り振り台帳: ' + n + '件追加しました。');
+    var res = syncAllocationSheet();
+    var msg = '割り振り台帳: 追加 ' + res.added + '件 / 更新 ' + res.updated + '件';
+    if (res.added === 0 && res.updated === 0) msg = '割り振り台帳: 変更はありませんでした。';
+    if (res.updated > 0) {
+      msg += '\n\n更新した行は差異（Q列）が赤くなることがあります。' +
+             '勤務時間が変わった行なので、4項目の配分を入れ直してください。';
     }
+    var warn = formatSyncIssues_(res.issues);
+    if (warn) msg += '\n\n' + warn;
+    ui.alert(msg);
   } catch (err) {
     ui.alert('エラー: ' + err.message);
   }
+}
+
+// ── 取り込み時に見つかった要確認行を整形（0件なら空文字） ──
+function formatSyncIssues_(issues) {
+  var blocks = [];
+  var section = function(title, list, note) {
+    if (!list || list.length === 0) return;
+    var shown = list.slice(0, 10).join('\n  ');
+    var more = list.length > 10 ? '\n  …ほか' + (list.length - 10) + '件' : '';
+    blocks.push('【' + title + '（' + list.length + '件）】' + (note ? '\n' + note : '') +
+                '\n  ' + shown + more);
+  };
+  section('取り込めなかった行', issues.noTimestamp,
+          'タイムスタンプが空のため台帳に入りません。請求から漏れます。');
+  section('同期できない行', issues.dupTimestamp,
+          'タイムスタンプが他の行と重複しており、どの行か特定できないため上書きしません。');
+  section('日付が日付型でない行', issues.badDate,
+          '日次PDFの対象日に一致しないため、PDFに出ません。');
+  section('勤務時間が開始終了と合わない行', issues.hoursMismatch,
+          '日報側で「日報メンテナンス → 勤務時間を一括で再計算」を実行してください。');
+  return blocks.join('\n\n');
 }
 
 // ── メニュー: 自動取り込みトリガーを有効化 ──
@@ -590,7 +615,8 @@ function removeAutoSyncTriggers_() {
 // ── installable trigger ハンドラ（自動取り込み用） ──
 function onOpenAutoSync() {
   try {
-    syncAllocationSheet();
+    var res = syncAllocationSheet();
+    Logger.log('自動取り込み: 追加 ' + res.added + '件 / 更新 ' + res.updated + '件');
   } catch (e) {
     Logger.log('自動取り込み失敗: ' + e.message);
   }
@@ -670,64 +696,127 @@ function ensureAllocationSheet_() {
   return sheet;
 }
 
-// ── #2 から最新データを取り込む（増分のみ、タイムスタンプで重複排除） ──
+// ── #2 から最新データを取り込む ──
+//   ・未取り込みの行は追加する
+//   ・取り込み済みの行は日報側の現在値で A〜K を上書きする（時刻の訂正を請求まで届かせるため）
+//   ・L〜O（4項目の配分）と R（メモ）は手入力なので必ず保持する
+//   ・タイムスタンプが行の同一性なので、空の行と重複している行は同期対象から外して報告する
 function syncAllocationSheet() {
   var sheet = ensureAllocationSheet_();
   var dataRows = fetchAllRows_();
 
-  // 既存タイムスタンプ集合
+  var issues = { noTimestamp: [], dupTimestamp: [], badDate: [], hoursMismatch: [] };
+
+  // タイムスタンプの出現回数（重複しているものは同一性の判定に使えない）
+  var tsCount = {};
+  dataRows.forEach(function(r) {
+    if (r[0] instanceof Date) {
+      var t = r[0].getTime();
+      tsCount[t] = (tsCount[t] || 0) + 1;
+    }
+  });
+
+  // 日報側: タイムスタンプ → 行（重複していないものだけ）
+  var srcByTs = {};
+  dataRows.forEach(function(r, i) {
+    var label = (i + 2) + '行目 ' + toDateStr(r[1]) + ' ' + (r[2] || '');
+
+    // 検出は全行に対して行う（取り込めない行こそ知らせる必要がある）
+    if (!(r[1] instanceof Date)) issues.badDate.push(label);
+    var h = calcHoursFromTimes_(r[4], r[5]);
+    if (h !== '' && r[11] !== '' && r[11] != null && Number(r[11]) !== h) {
+      issues.hoursMismatch.push(label + '：勤務時間 ' + r[11] + ' / 開始終了からは ' + h);
+    }
+
+    if (!(r[0] instanceof Date)) { issues.noTimestamp.push(label); return; }
+    var t = r[0].getTime();
+    if (tsCount[t] > 1) { issues.dupTimestamp.push(label); return; }
+    srcByTs[t] = r;
+  });
+
+  // ── 取り込み済みの行を日報側の現在値で同期 ──
+  var updated = 0;
   var existing = {};
-  if (sheet.getLastRow() > 1) {
-    var values = sheet.getRange(2, ALLOC_COL.TIMESTAMP, sheet.getLastRow() - 1, 1).getValues();
-    values.forEach(function(row) {
-      var ts = row[0];
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    var n = lastRow - 1;
+    var block = sheet.getRange(2, ALLOC_COL.TIMESTAMP, n, 11);
+    var cur = block.getValues();
+    var next = [];
+    for (var i = 0; i < n; i++) {
+      var ts = cur[i][0];
       if (ts instanceof Date) existing[ts.getTime()] = true;
-    });
+      var src = (ts instanceof Date) ? srcByTs[ts.getTime()] : null;
+      if (!src) { next.push(cur[i]); continue; }
+      var payload = allocationRowFrom_(src);
+      if (allocCompareKey_(cur[i]) !== allocCompareKey_(payload)) updated++;
+      next.push(payload);
+    }
+    if (updated > 0) block.setValues(next);
   }
 
-  // 新規行を抽出
+  // ── 未取り込みの行を追加 ──
   var newRows = [];
   dataRows.forEach(function(r) {
-    var ts = r[0];
-    if (!(ts instanceof Date)) return;
-    if (existing[ts.getTime()]) return;
-
-    newRows.push([
-      ts,                                             // A タイムスタンプ
-      toDateStr(r[1]),                                // B 日付
-      r[2] || '',                                     // C 氏名
-      r[3] || '',                                     // D ポスト
-      formatTimeForDisplay_(r[4]),                    // E 開始
-      formatEndTimeForDisplay_(r[4], r[5]),           // F 終了（日跨ぎなら「翌」付き）
-      r[11] === '' || r[11] == null ? '' : r[11],     // G 勤務時間
-      String(r[6] || '').replace(/\n/g, ' / '),       // H イベント
-      String(r[7] || '').replace(/\n/g, ' / '),       // I 実施事項
-      String(r[8] || '').replace(/\n/g, ' / '),       // J 業務内容
-      String(r[9] || '').replace(/\n/g, ' / '),       // K 特記事項
-      '', '', '', '',                                 // L-O 4項目（空、手入力）
-      '', '',                                         // P-Q 配分計・差異(数式は後置)
-      '',                                             // R メモ
-    ]);
+    if (!(r[0] instanceof Date)) return;
+    if (existing[r[0].getTime()]) return;
+    newRows.push(allocationRowFrom_(r).concat(['', '', '', '', '', '', '']));  // L〜R
   });
 
-  if (newRows.length === 0) return 0;
+  if (newRows.length > 0) {
+    var startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, newRows.length, ALLOCATION_HEADERS.length).setValues(newRows);
 
-  var startRow = sheet.getLastRow() + 1;
-  sheet.getRange(startRow, 1, newRows.length, ALLOCATION_HEADERS.length).setValues(newRows);
+    // P列(配分計)・Q列(差異)に行ごとの数式
+    var formulasP = newRows.map(function(_, i) {
+      var r = startRow + i;
+      return ['=IF(SUM(L' + r + ':O' + r + ')=0,"",SUM(L' + r + ':O' + r + '))'];
+    });
+    var formulasQ = newRows.map(function(_, i) {
+      var r = startRow + i;
+      return ['=IF(P' + r + '="","",G' + r + '-P' + r + ')'];
+    });
+    sheet.getRange(startRow, ALLOC_COL.ALLOC_SUM, newRows.length, 1).setFormulas(formulasP);
+    sheet.getRange(startRow, ALLOC_COL.ALLOC_DIFF, newRows.length, 1).setFormulas(formulasQ);
+  }
 
-  // P列(配分計)・Q列(差異)に行ごとの数式
-  var formulasP = newRows.map(function(_, i) {
-    var r = startRow + i;
-    return ['=IF(SUM(L' + r + ':O' + r + ')=0,"",SUM(L' + r + ':O' + r + '))'];
-  });
-  var formulasQ = newRows.map(function(_, i) {
-    var r = startRow + i;
-    return ['=IF(P' + r + '="","",G' + r + '-P' + r + ')'];
-  });
-  sheet.getRange(startRow, ALLOC_COL.ALLOC_SUM, newRows.length, 1).setFormulas(formulasP);
-  sheet.getRange(startRow, ALLOC_COL.ALLOC_DIFF, newRows.length, 1).setFormulas(formulasQ);
+  return { added: newRows.length, updated: updated, issues: issues };
+}
 
-  return newRows.length;
+// ── 日報1行 → 割り振り台帳の A〜K（11列） ──
+function allocationRowFrom_(r) {
+  return [
+    r[0],                                           // A タイムスタンプ
+    toDateStr(r[1]),                                // B 日付
+    r[2] || '',                                     // C 氏名
+    r[3] || '',                                     // D ポスト
+    formatTimeForDisplay_(r[4]),                    // E 開始
+    formatEndTimeForDisplay_(r[4], r[5]),           // F 終了（日跨ぎなら「翌」付き）
+    r[11] === '' || r[11] == null ? '' : r[11],     // G 勤務時間
+    String(r[6] || '').replace(/\n/g, ' / '),       // H イベント
+    String(r[7] || '').replace(/\n/g, ' / '),       // I 実施事項
+    String(r[8] || '').replace(/\n/g, ' / '),       // J 業務内容
+    String(r[9] || '').replace(/\n/g, ' / '),       // K 特記事項
+  ];
+}
+
+// ── 変更検出用の正規化キー ──
+//   シートに書くと 'YYYY-MM-DD' や 'HH:mm' が日付型に変換されることがあるので、
+//   台帳側・日報側の両方を同じ形に揃えてから比較する。
+function allocCompareKey_(vals) {
+  return [
+    vals[0] instanceof Date ? vals[0].getTime() : String(vals[0]),
+    toDateStr(vals[1]),
+    String(vals[2]),
+    String(vals[3]),
+    formatTimeForDisplay_(vals[4]),
+    formatTimeForDisplay_(vals[5]),
+    (vals[6] === '' || vals[6] == null) ? '' : String(Number(vals[6])),
+    String(vals[7]),
+    String(vals[8]),
+    String(vals[9]),
+    String(vals[10]),
+  ].join('\u0001');
 }
 
 // ── 時刻表示フォーマット（HH:mm） ──
@@ -743,14 +832,27 @@ function formatTimeForDisplay_(val) {
   return s;
 }
 
-// ── 日跨ぎ判定（HH:mm 同士を比較し、終了が開始より前なら日跨ぎ） ──
-function isOvernight_(startHHmm, endHHmm) {
-  var toMin = function(v) {
-    var mm = /^(\d{1,2}):(\d{2})$/.exec(String(v));
-    return mm ? parseInt(mm[1], 10) * 60 + parseInt(mm[2], 10) : null;
-  };
-  var s = toMin(startHHmm), e = toMin(endHHmm);
+// ── 'HH:mm' / 'HH:mm:ss' / Date を 0時からの分に変換（読めなければ null） ──
+function timeToMinutes_(val) {
+  if (val === '' || val == null) return null;
+  if (val instanceof Date) return val.getHours() * 60 + val.getMinutes();
+  var m = /^(\d{1,2}):(\d{2})/.exec(String(val).trim());
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+}
+
+// ── 日跨ぎ判定（終了が開始より前なら日跨ぎ） ──
+function isOvernight_(startVal, endVal) {
+  var s = timeToMinutes_(startVal), e = timeToMinutes_(endVal);
   return s !== null && e !== null && e < s;
+}
+
+// ── 開始・終了から勤務時間(h)を算出。gas_code.js の calcWorkHours_ と同じ規則 ──
+function calcHoursFromTimes_(startVal, endVal) {
+  var s = timeToMinutes_(startVal), e = timeToMinutes_(endVal);
+  if (s === null || e === null) return '';
+  var mins = e - s;
+  if (mins < 0) mins += 24 * 60;
+  return mins / 60;
 }
 
 // ── 終了時刻の表示（日跨ぎなら「翌」を前置） ──
