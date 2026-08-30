@@ -559,6 +559,8 @@
   buildHourOptions('end_h');
 
   // 勤務時間の自動計算
+  const MAX_WORK_MINUTES = 16 * 60;   // これを超える勤務は入力ミスとみなしてブロックする
+
   function getTimeValue(hId, mId) {
     const h = document.getElementById(hId).value;
     const m = document.getElementById(mId).value;
@@ -566,17 +568,25 @@
     return parseInt(h) * 60 + parseInt(m);
   }
 
-  function updateDuration() {
-    const el = document.getElementById('duration_display');
+  // 終了が開始より前なら日跨ぎとみなして24時間を足す
+  function calcDuration() {
     const s = getTimeValue('start_h', 'start_m');
     const e = getTimeValue('end_h', 'end_m');
-    if (s === null || e === null) { el.textContent = ''; return; }
-    let mins = e - s;
-    if (mins < 0) mins += 24 * 60;
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    const overnight = e - s < 0;
-    el.textContent = `→ 勤務時間：${h}時間${m > 0 ? m + '分' : ''}${overnight ? '（日跨ぎ）' : ''}`;
+    if (s === null || e === null) return null;
+    const overnight = e < s;
+    return { mins: overnight ? e - s + 24 * 60 : e - s, overnight };
+  }
+
+  function formatDuration(d, withTag) {
+    const h = Math.floor(d.mins / 60);
+    const m = d.mins % 60;
+    return `${h}時間${m > 0 ? m + '分' : ''}${withTag && d.overnight ? '（日跨ぎ）' : ''}`;
+  }
+
+  function updateDuration() {
+    const el = document.getElementById('duration_display');
+    const d = calcDuration();
+    el.textContent = d ? `→ 勤務時間：${formatDuration(d, true)}` : '';
   }
   ['start_h','start_m','end_h','end_m'].forEach(id => {
     document.getElementById(id).addEventListener('change', updateDuration);
@@ -672,6 +682,14 @@
       return;
     }
 
+    const dur = calcDuration();
+    if (dur.mins > MAX_WORK_MINUTES) {
+      status.textContent = `勤務時間が${formatDuration(dur, false)}になっています。開始と終了を取り違えていないか確認してください（16時間を超える勤務は報告できません）。`;
+      status.className = 'error';
+      document.getElementById('start_h').focus();
+      return;
+    }
+
     const postVal = document.querySelector('input[name="post"]:checked');
     if (!postVal) {
       status.textContent = 'ポスト区分を選択してください。';
@@ -712,7 +730,9 @@
     document.getElementById('c_member').textContent = pendingPayload.member;
     document.getElementById('c_post').textContent = pendingPayload.post === 'L' ? '［L］リーダー' : '［S］サポーター';
     document.getElementById('c_worktype').textContent = pendingPayload.worktype === 'リモート' ? 'リモート（交通費なし）' : '現地（交通費あり）';
-    document.getElementById('c_time').textContent = pendingPayload.start_time + ' 〜 ' + pendingPayload.end_time;
+    document.getElementById('c_time').textContent =
+      pendingPayload.start_time + ' 〜 ' + (dur.overnight ? '翌' : '') + pendingPayload.end_time
+      + '（' + formatDuration(dur, false) + '）';
     document.getElementById('c_title').textContent = pendingPayload.title;
     document.getElementById('c_tasks').textContent = pendingPayload.tasks || '（未入力）';
     document.getElementById('c_content').textContent = pendingPayload.content || '（未入力）';

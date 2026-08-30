@@ -366,7 +366,10 @@ function generatePdfForDate_(dateStr, rows) {
   var postLabel = function(v) { return v === 'L' ? 'リーダー' : v === 'S' ? 'サポーター' : ''; };
   var shifts = rows.map(function(r) {
     var post = r[3] ? '(' + postLabel(r[3]) + ')' : '';
-    return displayName_(r[2]) + post + '：' + formatTime(r[4]) + '〜' + formatTime(r[5]) + '（' + r[11] + 'h）';
+    var st = formatTime(r[4]);
+    var en = formatTime(r[5]);
+    if (isOvernight_(st, en)) en = '翌' + en;
+    return displayName_(r[2]) + post + '：' + st + '〜' + en + '（' + r[11] + 'h）';
   }).join('\n');
 
   // イベント名／実施業務: 個々の項目単位で重複を除去
@@ -695,7 +698,7 @@ function syncAllocationSheet() {
       r[2] || '',                                     // C 氏名
       r[3] || '',                                     // D ポスト
       formatTimeForDisplay_(r[4]),                    // E 開始
-      formatTimeForDisplay_(r[5]),                    // F 終了
+      formatEndTimeForDisplay_(r[4], r[5]),           // F 終了（日跨ぎなら「翌」付き）
       r[11] === '' || r[11] == null ? '' : r[11],     // G 勤務時間
       String(r[6] || '').replace(/\n/g, ' / '),       // H イベント
       String(r[7] || '').replace(/\n/g, ' / '),       // I 実施事項
@@ -738,6 +741,23 @@ function formatTimeForDisplay_(val) {
   var m = s.match(/(\d{1,2}:\d{2}):\d{2}/);
   if (m) return m[1];
   return s;
+}
+
+// ── 日跨ぎ判定（HH:mm 同士を比較し、終了が開始より前なら日跨ぎ） ──
+function isOvernight_(startHHmm, endHHmm) {
+  var toMin = function(v) {
+    var mm = /^(\d{1,2}):(\d{2})$/.exec(String(v));
+    return mm ? parseInt(mm[1], 10) * 60 + parseInt(mm[2], 10) : null;
+  };
+  var s = toMin(startHHmm), e = toMin(endHHmm);
+  return s !== null && e !== null && e < s;
+}
+
+// ── 終了時刻の表示（日跨ぎなら「翌」を前置） ──
+function formatEndTimeForDisplay_(startVal, endVal) {
+  var s = formatTimeForDisplay_(startVal);
+  var e = formatTimeForDisplay_(endVal);
+  return isOvernight_(s, e) ? '翌' + e : e;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
