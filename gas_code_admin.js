@@ -575,6 +575,8 @@ function formatSyncIssues_(issues) {
   };
   section('取り込めなかった行', issues.noTimestamp,
           'タイムスタンプが空のため台帳に入りません。請求から漏れます。');
+  section('台帳に入りきっていない行', issues.dupIncomplete,
+          'タイムスタンプが重複しており、同じ時刻の行の一部しか台帳にありません。請求から漏れている可能性があります。');
   section('同期できない行', issues.dupTimestamp,
           'タイムスタンプが他の行と重複しており、どの行か特定できないため上書きしません。');
   section('日付が日付型でない行', issues.badDate,
@@ -705,7 +707,7 @@ function syncAllocationSheet() {
   var sheet = ensureAllocationSheet_();
   var dataRows = fetchAllRows_();
 
-  var issues = { noTimestamp: [], dupTimestamp: [], badDate: [], hoursMismatch: [] };
+  var issues = { noTimestamp: [], dupTimestamp: [], dupIncomplete: [], badDate: [], hoursMismatch: [] };
 
   // タイムスタンプの出現回数（重複しているものは同一性の判定に使えない）
   var tsCount = {};
@@ -718,11 +720,13 @@ function syncAllocationSheet() {
 
   // 日報側: タイムスタンプ → 行（重複していないものだけ）
   var srcByTs = {};
+  var dupRows = [];
   dataRows.forEach(function(r, i) {
     var label = (i + 2) + '行目 ' + toDateStr(r[1]) + ' ' + (r[2] || '');
 
     // 検出は全行に対して行う（取り込めない行こそ知らせる必要がある）
-    if (!(r[1] instanceof Date)) issues.badDate.push(label);
+    // 日付型でも 'YYYY-MM-DD' の文字列でも日次PDF・請求集計は一致する。それ以外だけを問題とする
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(toDateStr(r[1]))) issues.badDate.push(label);
     var h = calcHoursFromTimes_(r[4], r[5]);
     if (h !== '' && r[11] !== '' && r[11] != null && Number(r[11]) !== h) {
       issues.hoursMismatch.push(label + '：勤務時間 ' + r[11] + ' / 開始終了からは ' + h);
@@ -730,7 +734,7 @@ function syncAllocationSheet() {
 
     if (!(r[0] instanceof Date)) { issues.noTimestamp.push(label); return; }
     var t = r[0].getTime();
-    if (tsCount[t] > 1) { issues.dupTimestamp.push(label); return; }
+    if (tsCount[t] > 1) { dupRows.push({ label: label, t: t }); return; }
     srcByTs[t] = r;
   });
 
@@ -745,7 +749,7 @@ function syncAllocationSheet() {
     var next = [];
     for (var i = 0; i < n; i++) {
       var ts = cur[i][0];
-      if (ts instanceof Date) existing[ts.getTime()] = true;
+      if (ts instanceof Date) existing[ts.getTime()] = (existing[ts.getTime()] || 0) + 1;
       var src = (ts instanceof Date) ? srcByTs[ts.getTime()] : null;
       if (!src) { next.push(cur[i]); continue; }
       var payload = allocationRowFrom_(src);
@@ -754,6 +758,14 @@ function syncAllocationSheet() {
     }
     if (updated > 0) block.setValues(next);
   }
+
+  // ── 重複タイムスタンプ行の分類（台帳に何件入っているかで意味が変わる） ──
+  dupRows.forEach(function(d) {
+    var inLedger = existing[d.t] || 0;
+    if (inLedger === 0) return;                                  // 未取り込み → このあと追加されるので問題なし
+    if (inLedger < tsCount[d.t]) issues.dupIncomplete.push(d.label);  // 一部しか入っていない
+    else issues.dupTimestamp.push(d.label);                      // 入ってはいるが上書きできない
+  });
 
   // ── 未取り込みの行を追加 ──
   var newRows = [];

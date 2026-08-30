@@ -179,17 +179,16 @@ function runRecalcAllHours() {
   var times = sheet.getRange(2, COL.START, n, 2).getValues();
   var cur   = sheet.getRange(2, COL.HOURS, n, 1).getValues();
 
-  var next = [];
+  var changed = [];   // [シート行番号, 新しい勤務時間]
   var diffs = [];
   var unreadable = 0;
   for (var i = 0; i < n; i++) {
     var h = calcWorkHours_(times[i][0], times[i][1]);
-    if (h === '') { next.push([cur[i][0]]); unreadable++; continue; }
-    next.push([h]);
-    if (Number(cur[i][0]) !== h) {
-      diffs.push('  ' + (i + 2) + '行目 ' + formatDateCell_(dates[i][0]) + ' ' +
-                 names[i][0] + '：' + cur[i][0] + ' → ' + h);
-    }
+    if (h === '') { unreadable++; continue; }        // 時刻が読めない行は触らない
+    if (Number(cur[i][0]) === h) continue;           // 一致している行も触らない
+    changed.push([i + 2, h]);
+    diffs.push('  ' + (i + 2) + '行目 ' + formatDateCell_(dates[i][0]) + ' ' +
+               names[i][0] + '：' + cur[i][0] + ' → ' + h);
   }
 
   var tail = unreadable > 0 ? '\n\n※ 開始・終了が読めない行が' + unreadable + '件あり、そのままにしました。' : '';
@@ -205,7 +204,7 @@ function runRecalcAllHours() {
     ui.ButtonSet.OK_CANCEL);
   if (res !== ui.Button.OK) return;
 
-  sheet.getRange(2, COL.HOURS, n, 1).setValues(next);
+  changed.forEach(function(c) { sheet.getRange(c[0], COL.HOURS).setValue(c[1]); });
   ui.alert('勤務時間を再計算しました（' + diffs.length + '件を更新）。\n' +
            '管理用スプレッドシートで「割り振り → 業務完了報告より最新データを読み込み」も実行してください。');
 }
