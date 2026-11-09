@@ -20,7 +20,7 @@
 
 // ── 設定 ──────────────────────────
 const CONFIG = {
-  DATA_SPREADSHEET_ID: '16I5MK1Tqv2_UXi-I8VYHSO22iAO-joNpV_PrejHntVQ',  // 閲覧用（日報データ）
+  DATA_SPREADSHEET_ID: '16I5MK1Tqv2_UXi-I8VYHSO22iAO-joNpV_PrejHntVQ',  // 業務完了報告2026（日報データ・本番）
   SHEET_NAME: '日報_2026',
   TEMPLATE_SHEET_NAME: 'テンプレート_日報',
   SUMMARY_TEMPLATE_SHEET_NAME: 'テンプレート_月次サマリ',
@@ -1027,7 +1027,7 @@ function upsertBillingDetailSheet(yearMonth, carryInL, carryInS) {
 
   // ── 翌月繰越 案内 ────────────────────────────
   sheet.getRange('A13').setValue(
-    '★翌月繰越（次月の「設定」B2/B3 に転記）: L=' + ov.carryOutL + 'H, S=' + ov.carryOutS + 'H'
+    '★翌月繰越（次月の「設定_請求集計」B5/B6 に転記）: L=' + ov.carryOutL + 'H, S=' + ov.carryOutS + 'H'
   ).setFontWeight('bold').setBackground('#fff4d6');
 
   // ── 項目別 内訳 ────────────────────────────
@@ -1212,7 +1212,7 @@ function aggregateBillingData_(yearMonth, carryInL, carryInS) {
 //     {{responsible}}                          … 担当者名
 //     [L/S精算]
 //     {{hours_l}} / {{hours_s}}                … 当月実働H（割り振り台帳ベース）
-//     {{carry_in_l}} / {{carry_in_s}}          … 前月繰越H（設定B2/B3より）
+//     {{carry_in_l}} / {{carry_in_s}}          … 前月繰越H（設定_請求集計 B5/B6より）
 //     {{avail_l}} / {{avail_s}}                … 使用可能H（実働+繰越）
 //     {{deemed_l}} / {{deemed_s}}              … みなしP（=floor(使用可能/8)、整数）
 //     {{carry_out_l}} / {{carry_out_s}}        … 翌月繰越H
