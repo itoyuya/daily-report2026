@@ -435,6 +435,7 @@ function generatePdfForDate_(dateStr, rows) {
 
   var range = tmpSheet.getDataRange();
   var values = range.getValues();
+  var filledCells = [];
   for (var i = 0; i < values.length; i++) {
     for (var j = 0; j < values[i].length; j++) {
       var cell = values[i][j];
@@ -445,10 +446,17 @@ function generatePdfForDate_(dateStr, rows) {
         }
         if (newVal !== cell) {
           tmpSheet.getRange(i + 1, j + 1).setValue(newVal);
+          // 固定高さ（240px）の3欄だけ広げる。他の欄はシートの自動調整に任せる
+          if (/\{\{(content|shift|notes)\}\}/.test(cell)) {
+            filledCells.push({ row: i + 1, col: j + 1, text: newVal });
+          }
         }
       }
     }
   }
+
+  // 文の量に合わせて行の高さを広げる（テンプレートの固定高さで文が切れるのを防ぐ）
+  filledCells.forEach(function(c) { fitRowHeightToText_(tmpSheet, c.row, c.col, c.text); });
 
   SpreadsheetApp.flush();
 
@@ -483,6 +491,40 @@ function generatePdfForDate_(dateStr, rows) {
   } finally {
     ss.deleteSheet(tmpSheet);
   }
+}
+
+// ── 文の量に合わせて行の高さを広げる（日報PDF用） ──
+//   テンプレートの業務内容・勤務シフト・特記事項は行の高さが固定（240px）で、
+//   文が多い日は枠の外が印刷で切れていた（2026-09〜10に確認）。
+//   結合セルは自動調整が効かないため、文字数から行数を見積もって高さを決める。
+//   テンプレートの高さより小さくはしない（短い日の見た目は変えない）。
+//   全角1字＝1、半角1字＝0.55として1行に入る字数を列幅とフォントサイズから見積もる。
+function fitRowHeightToText_(sheet, row, col, text) {
+  var cell = sheet.getRange(row, col);
+  var merged = cell.getMergedRanges();
+  var area = merged.length > 0 ? merged[0] : cell;
+  if (area.getNumRows() !== 1) return;  // 複数行の結合は対象外
+
+  var widthPx = 0;
+  for (var c = area.getColumn(); c <= area.getLastColumn(); c++) {
+    widthPx += sheet.getColumnWidth(c);
+  }
+  var fontSize = cell.getFontSize() || 10;
+  var charPx = fontSize * 1.4;            // 全角1字の幅（10pt≒14px）
+  var linePx = fontSize * 1.6;            // 1行の高さ（10pt≒16px）
+  var perLine = Math.max(1, Math.floor((widthPx - 8) / charPx));
+
+  var lines = 0;
+  String(text).split('\n').forEach(function(para) {
+    var units = 0;
+    for (var k = 0; k < para.length; k++) {
+      units += para.charCodeAt(k) > 0xFF ? 1 : 0.55;
+    }
+    lines += Math.max(1, Math.ceil(units / perLine));
+  });
+
+  var needPx = Math.ceil(lines * linePx + 12);
+  if (needPx > sheet.getRowHeight(row)) sheet.setRowHeight(row, needPx);
 }
 
 // ── PDFエクスポート（429/5xx は指数バックオフでリトライ） ──
